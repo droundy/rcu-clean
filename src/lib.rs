@@ -55,8 +55,8 @@
 
 use std::cell::{UnsafeCell, Cell};
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool,Ordering};
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 /// A reference counted pointer that allows interior mutability
 ///
@@ -260,22 +260,15 @@ impl<T> std::borrow::Borrow<T> for ArcCell<T> {
 /// assert_eq!(*x, 7); // but the pointer now points to the new value.
 /// ```
 pub struct BoxCell<T> {
-    inner: UnsafeCell<BoxCellInner<T>>,
-}
-pub struct BoxCellInner<T> {
-    current: Box<T>,
-    old: Vec<Box<T>>,
-    borrow_count: usize,
+    current: AtomicPtr<T>,
+    old: Mutex<Vec<Box<T>>>,
 }
 
 impl<T: Clone> BoxCell<T> {
     pub fn new(value: T) -> BoxCell<T> {
         BoxCell {
-            inner: UnsafeCell::new(BoxCellInner {
-                current: Box::new(value),
-                old: Vec::new(),
-                borrow_count: 0,
-            }),
+            current: AtomicPtr::new(Box::into_raw(Box::new(value))),
+            old: Mutex::new(Vec::new()),
         }
     }
     /// Make a copy of the data and return a reference.
@@ -284,20 +277,17 @@ impl<T: Clone> BoxCell<T> {
     /// no protection against two simultaneous writes.  The one that
     /// drops second will "win".
     pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
-        unsafe {
-            Guard {
-                value: Box::new((*self).clone()),
-                inner: &mut *self.inner.get(),
-            }
+        BoxGuard {
+            value: Box::into_raw(Box::new((*self).clone())),
+            boxcell: self,
+            guard: self.old.lock().unwrap(),
         }
     }
     /// Free all old versions of the data.  Because this method
     /// requires a mutable reference, it is guaranteed that no
     /// references exist.
     pub fn clean(&mut self) {
-        unsafe {
-            (*self.inner.get()).old = Vec::new();
-        }
+        *self.old.lock().unwrap() = Vec::new();
     }
 }
 
@@ -313,11 +303,11 @@ impl<T: Clone> std::borrow::BorrowMut<T> for BoxCell<T> {
         // there, so we can throw away any old references.  We also
         // don't need to bother cloning the data, since (again) there
         // are no other references out there.  Yay.
-        unsafe {
-            let b = &mut (*self.inner.get());
-            b.old = Vec::new();
-            b.current.borrow_mut()
-        }
+        self.clean();
+        // I think it's safe to use a relaxed load here because we
+        // have exclusive access to this BoxCell, so there must be
+        // some other synchronization done.
+        unsafe { &mut *self.current.load(Ordering::Relaxed) }
     }
 }
 
@@ -325,11 +315,43 @@ impl<T> std::ops::Deref for BoxCell<T> {
     type Target = T;
     fn deref(&self) -> &T {
         unsafe {
-            &(*self.inner.get()).current
+            // I think I need to Acquire here because otherwise it may
+            // be possible to update a pointer and then have the new
+            // pointer value visible when the bytes that are pointed
+            // to are still incorrect.
+            &*self.current.load(Ordering::Acquire)
         }
     }
 }
 
+struct BoxGuard<'a,T: Clone> {
+    value: *mut T,
+    boxcell: &'a BoxCell<T>,
+    guard: std::sync::MutexGuard<'a,Vec<Box<T>>>,
+}
+impl<'a,T: Clone> std::ops::Deref for BoxGuard<'a,T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { &*self.value }
+    }
+}
+impl<'a,T: Clone> std::ops::DerefMut for BoxGuard<'a,T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.value }
+    }
+}
+impl<'a,T: Clone> Drop for BoxGuard<'a,T> {
+    fn drop(&mut self) {
+        self.value = self.boxcell.current.swap(self.value, Ordering::Release);
+        self.guard.push(unsafe { Box::from_raw(self.value) });
+    }
+}
+
+pub struct BoxCellInner<T> {
+    current: Box<T>,
+    old: Vec<Box<T>>,
+    borrow_count: usize,
+}
 struct Guard<'a,T: Clone> {
     value: Box<T>,
     inner: &'a mut BoxCellInner<T>,
