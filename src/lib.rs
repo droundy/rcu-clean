@@ -263,6 +263,14 @@ pub struct BoxCell<T> {
     current: AtomicPtr<T>,
     old: Mutex<Vec<Box<T>>>,
 }
+impl<T> Drop for BoxCell<T> {
+    fn drop(&mut self) {
+        // this frees the current value of the pointer.  It is acquire
+        // because the contents of the pointer must be up to date so
+        // the drop of T doesn't do anything crazy.
+        unsafe { Box::from_raw(self.current.load(Ordering::Acquire)); }
+    }
+}
 
 impl<T: Clone> BoxCell<T> {
     pub fn new(value: T) -> BoxCell<T> {
