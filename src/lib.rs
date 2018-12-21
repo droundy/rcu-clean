@@ -21,13 +21,82 @@
 //!    without the nuisance of having to call borrow when reading.
 
 use std::cell::UnsafeCell;
+use std::rc::Rc;
+
+/// A reference counted pointer that allows interior mutability
+///
+/// An [RcCell] is currently the size of a five pointers and has an
+/// additial layer of indirection.  Its size could be reduced at the
+/// cost of a bit of code complexity if that were deemed worthwhile.
+/// By using a linked list of old values, we could save a couple of
+/// words.  Read access using `RcCell` has one additional indirection.
+
+/// ```
+/// let x = unguarded::RcCell::new(3);
+/// let y: &usize = &(*x);
+/// let z = x.clone();
+/// *x.write() = 7; // Wow, we are mutating something we have borrowed!
+/// assert_eq!(*y, 3); // the old reference is still valid.
+/// assert_eq!(*x, 7); // but the pointer now points to the new value.
+/// assert_eq!(*z, 7); // but the cloned pointer also points to the new value.
+/// ```
+
+#[derive(Clone)]
+pub struct RcCell<T>(Rc<UnsafeCell<BoxCellInner<T>>>);
+
+impl<T: Clone> RcCell<T> {
+    pub fn new(value: T) -> RcCell<T> {
+        RcCell( Rc::new(UnsafeCell::new(BoxCellInner {
+            current: Box::new(value),
+            old: Vec::new(),
+        })))
+    }
+    /// Make a copy of the data and return a reference.
+    ///
+    /// When the guard is dropped, `self` will be updated.  There is
+    /// no protection against two simultaneous writes.  The one that
+    /// drops second will "win".
+    pub fn write<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
+        unsafe {
+            Guard {
+                value: Box::new((*(*self)).clone()),
+                inner: &mut *self.0.get(),
+            }
+        }
+    }
+}
+
+impl<T> std::ops::Deref for RcCell<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe {
+            &(*self.0.get()).current
+        }
+    }
+}
+
+impl<T> std::borrow::Borrow<T> for RcCell<T> {
+    fn borrow(&self) -> &T {
+        &*self
+    }
+}
 
 /// An owned pointer that allows interior mutability
+///
+/// A [BoxCell] is currently the size of a four pointers.  Its size
+/// could be decreased at the cost of a bit of code complexity if that
+/// were deemed worthwhile.  By using a linked list of old values, we
+/// could bring the common case down to 2 pointers.  Read access using
+/// `BoxCell` is the same as for `Box`.
+///
+/// The main thing that simplifies and speeds up `[BoxCell]` is that
+/// it cannot be either cloned or shared across threads.  Thus we
+/// don't need any fancy locking or use of atomics.
 ///
 /// ```
 /// let x = unguarded::BoxCell::new(3);
 /// let y: &usize = &(*x);
-/// *x.lock() = 7; // Wow, we are mutating something we have borrowed!
+/// *x.write() = 7; // Wow, we are mutating something we have borrowed!
 /// assert_eq!(*y, 3); // the old reference is still valid.
 /// assert_eq!(*x, 7); // but the pointer now points to the new value.
 /// ```
@@ -44,13 +113,25 @@ impl<T: Clone> BoxCell<T> {
             old: Vec::new(),
         }))
     }
-    pub fn lock<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
+    /// Make a copy of the data and return a reference.
+    ///
+    /// When the guard is dropped, `self` will be updated.  There is
+    /// no protection against two simultaneous writes.  The one that
+    /// drops second will "win".
+    pub fn write<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
         unsafe {
-            (*self.0.get()).old = Vec::new();
             Guard {
                 value: Box::new((*self).clone()),
-                boxu: &mut *self.0.get(),
+                inner: &mut *self.0.get(),
             }
+        }
+    }
+    /// Free all old versions of the data.  Because this method
+    /// requires a mutable reference, it is guaranteed that no
+    /// references exist.
+    pub fn clean(&mut self) {
+        unsafe {
+            (*self.0.get()).old = Vec::new();
         }
     }
 }
@@ -86,7 +167,7 @@ impl<T> std::ops::Deref for BoxCell<T> {
 
 struct Guard<'a,T: Clone> {
     value: Box<T>,
-    boxu: &'a mut BoxCellInner<T>,
+    inner: &'a mut BoxCellInner<T>,
 }
 impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
     type Target = T;
@@ -104,15 +185,7 @@ impl<'a,T: Clone> Drop for Guard<'a,T> {
         // FIXME I'd like to avoid the needless clone here.  Do I
         // really need to use an Option<Box<T>> just to avoid
         // allocating something to destroy?
-        self.boxu.old.push(std::mem::replace(&mut self.boxu.current,
-                                             self.value.clone()));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+        self.inner.old.push(std::mem::replace(&mut self.inner.current,
+                                              self.value.clone()));
     }
 }
