@@ -56,6 +56,7 @@
 use std::cell::{UnsafeCell, Cell};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool,Ordering};
 
 /// A reference counted pointer that allows interior mutability
 ///
@@ -75,10 +76,18 @@ use std::sync::Arc;
 /// assert_eq!(*z, 7); // but the cloned pointer also points to the new value.
 /// ```
 
-#[derive(Clone)]
 pub struct RcCell<T> {
     inner: Rc<UnsafeCell<BoxCellInner<T>>>,
-    have_borrowed: Cell<bool>,
+    have_borrowed: AtomicBool,
+}
+
+impl<T: Clone> Clone for RcCell<T> {
+    fn clone(&self) -> Self {
+        RcCell {
+            inner: self.inner.clone(),
+            have_borrowed: AtomicBool::new(false),
+        }
+    }
 }
 
 impl<T: Clone> RcCell<T> {
@@ -89,7 +98,7 @@ impl<T: Clone> RcCell<T> {
                 old: Vec::new(),
                 borrow_count: 0,
             })),
-            have_borrowed: Cell::new(false),
+            have_borrowed: AtomicBool::new(false),
         }
     }
     /// Make a copy of the data and return a reference.
@@ -109,8 +118,7 @@ impl<T: Clone> RcCell<T> {
     /// requires a mutable reference, it is guaranteed that no
     /// references exist.
     pub fn clean(&mut self) {
-        if self.have_borrowed.get() {
-            self.have_borrowed.set(false);
+        if self.have_borrowed.load(Ordering::Acquire) {
             unsafe {
                 let mut inner = &mut *self.inner.get();
                 inner.borrow_count -= 1;
@@ -118,6 +126,7 @@ impl<T: Clone> RcCell<T> {
                     inner.old = Vec::new();
                 }
             }
+            self.have_borrowed.store(false, Ordering::Release);
         }
     }
 }
@@ -125,12 +134,12 @@ impl<T: Clone> RcCell<T> {
 impl<T> std::ops::Deref for RcCell<T> {
     type Target = T;
     fn deref(&self) -> &T {
-        let aleady_borrowed = self.have_borrowed.get();
-        self.have_borrowed.set(true); // indicate we have borrowed this once.
+        let aleady_borrowed = self.have_borrowed.load(Ordering::Acquire);
         unsafe {
             let mut inner = &mut *self.inner.get();
             if !aleady_borrowed {
                 inner.borrow_count += 1;
+                self.have_borrowed.store(true, Ordering::Release); // indicate we have borrowed this once.
             }
             &inner.current
         }
@@ -166,8 +175,8 @@ pub struct ArcCell<T> {
     inner: Arc<UnsafeCell<BoxCellInner<T>>>,
     have_borrowed: Cell<bool>,
 }
-unsafe impl<T: Send + Clone> Send for ArcCell<T> {}
-unsafe impl<T: Sync + Clone> Sync for ArcCell<T> {}
+// unsafe impl<T: Send + Clone> Send for ArcCell<T> {}
+// unsafe impl<T: Sync + Clone> Sync for ArcCell<T> {}
 
 impl<T: Clone> ArcCell<T> {
     pub fn new(value: T) -> ArcCell<T> {
