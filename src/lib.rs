@@ -19,9 +19,43 @@
 //! 1. `[BoxCell]` is an owned pointer similar to [std::box::Box].
 //!    If you like, it is actually closer to `Box<RefCell<T>>`, but
 //!    without the nuisance of having to call borrow when reading.
+//!
+//! 2. `[RcCell]` is a reference counted pointer similar to [std::rc::Rc].
+//!    If you like, it is actually closer to `Rc<RefCell<T>>`, but
+//!    without the nuisance of having to call borrow when reading.
+//!
+//! 3. `ArcCell` is planned to be a thread-safe reference counted
+//!    pointer similar to [std::sync::Arc].  It is actually
+//!    closer to `Arc<RwLock<T>>`, but without the nuisance of having to
+//!    call `read` before reading.
+//!
+//! ### Cleaning
+//!
+//! Due to this crate's read-copy-update semantics, old copies of your
+//! data are kept until we are confident that there are no longer any
+//! references to them.  Because we do not have any guards on the read
+//! references, this must be done manually.  This is the cost we pay
+//! for extra convenience (and speed in the case of `BoxCell`) on the
+//! read operations.  You have two options for how to handle this.
+//!
+//! One option is to simply store those extra copies until then entire
+//! smart pointer itself is freed.  That is what happens if you do
+//! nothing, and for small data that is only mutated once, it's a
+//! great option.
+//!
+//! The other option is to call `clean()` when convenient.  `clean`
+//! takes a `&mut self`, so when it is called, the compiler will prove
+//! to us that there are no other references out there via *this*
+//! smart pointer.  For `BoxCell` that is sufficient to prove that we
+//! can free the data.  In the case of the reference counted data
+//! pointers, we keep track of a count of how many copies have been
+//! dereferenced since the last time `clean` was called.  We could do
+//! better with "epoch" counting, but in most cases I don't think that
+//! will be needed.
 
-use std::cell::UnsafeCell;
+use std::cell::{UnsafeCell, Cell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// A reference counted pointer that allows interior mutability
 ///
@@ -35,32 +69,54 @@ use std::rc::Rc;
 /// let x = unguarded::RcCell::new(3);
 /// let y: &usize = &(*x);
 /// let z = x.clone();
-/// *x.write() = 7; // Wow, we are mutating something we have borrowed!
+/// *x.update() = 7; // Wow, we are mutating something we have borrowed!
 /// assert_eq!(*y, 3); // the old reference is still valid.
 /// assert_eq!(*x, 7); // but the pointer now points to the new value.
 /// assert_eq!(*z, 7); // but the cloned pointer also points to the new value.
 /// ```
 
 #[derive(Clone)]
-pub struct RcCell<T>(Rc<UnsafeCell<BoxCellInner<T>>>);
+pub struct RcCell<T> {
+    inner: Rc<UnsafeCell<BoxCellInner<T>>>,
+    have_borrowed: Cell<bool>,
+}
 
 impl<T: Clone> RcCell<T> {
     pub fn new(value: T) -> RcCell<T> {
-        RcCell( Rc::new(UnsafeCell::new(BoxCellInner {
-            current: Box::new(value),
-            old: Vec::new(),
-        })))
+        RcCell {
+            inner: Rc::new(UnsafeCell::new(BoxCellInner {
+                current: Box::new(value),
+                old: Vec::new(),
+                borrow_count: 0,
+            })),
+            have_borrowed: Cell::new(false),
+        }
     }
     /// Make a copy of the data and return a reference.
     ///
     /// When the guard is dropped, `self` will be updated.  There is
-    /// no protection against two simultaneous writes.  The one that
+    /// no protection against two simultaneous updates.  The one that
     /// drops second will "win".
-    pub fn write<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
+    pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
         unsafe {
             Guard {
                 value: Box::new((*(*self)).clone()),
-                inner: &mut *self.0.get(),
+                inner: &mut *self.inner.get(),
+            }
+        }
+    }
+    /// Free all old versions of the data.  Because this method
+    /// requires a mutable reference, it is guaranteed that no
+    /// references exist.
+    pub fn clean(&mut self) {
+        if self.have_borrowed.get() {
+            self.have_borrowed.set(false);
+            unsafe {
+                let mut inner = &mut *self.inner.get();
+                inner.borrow_count -= 1;
+                if inner.borrow_count == 0 {
+                    inner.old = Vec::new();
+                }
             }
         }
     }
@@ -69,13 +125,107 @@ impl<T: Clone> RcCell<T> {
 impl<T> std::ops::Deref for RcCell<T> {
     type Target = T;
     fn deref(&self) -> &T {
+        let aleady_borrowed = self.have_borrowed.get();
+        self.have_borrowed.set(true); // indicate we have borrowed this once.
         unsafe {
-            &(*self.0.get()).current
+            let mut inner = &mut *self.inner.get();
+            if !aleady_borrowed {
+                inner.borrow_count += 1;
+            }
+            &inner.current
         }
     }
 }
 
 impl<T> std::borrow::Borrow<T> for RcCell<T> {
+    fn borrow(&self) -> &T {
+        &*self
+    }
+}
+
+/// A thread-safe reference counted pointer that allows interior mutability
+///
+/// An [ArcCell] is currently the size of a five pointers and has an
+/// additial layer of indirection.  Its size could be reduced at the
+/// cost of a bit of code complexity if that were deemed worthwhile.
+/// By using a linked list of old values, we could save a couple of
+/// words.  Read access using `ArcCell` has one additional indirection.
+
+/// ```
+/// let x = unguarded::ArcCell::new(3);
+/// let y: &usize = &(*x);
+/// let z = x.clone();
+/// *x.update() = 7; // Wow, we are mutating something we have borrowed!
+/// assert_eq!(*y, 3); // the old reference is still valid.
+/// assert_eq!(*x, 7); // but the pointer now points to the new value.
+/// assert_eq!(*z, 7); // but the cloned pointer also points to the new value.
+/// ```
+
+#[derive(Clone)]
+pub struct ArcCell<T> {
+    inner: Arc<UnsafeCell<BoxCellInner<T>>>,
+    have_borrowed: Cell<bool>,
+}
+unsafe impl<T: Send + Clone> Send for ArcCell<T> {}
+unsafe impl<T: Sync + Clone> Sync for ArcCell<T> {}
+
+impl<T: Clone> ArcCell<T> {
+    pub fn new(value: T) -> ArcCell<T> {
+        ArcCell {
+            inner: Arc::new(UnsafeCell::new(BoxCellInner {
+                current: Box::new(value),
+                old: Vec::new(),
+                borrow_count: 0,
+            })),
+            have_borrowed: Cell::new(false),
+        }
+    }
+    /// Make a copy of the data and return a reference.
+    ///
+    /// When the guard is dropped, `self` will be updated.  There is
+    /// no protection against two simultaneous updates.  The one that
+    /// drops second will "win".
+    pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
+        unsafe {
+            Guard {
+                value: Box::new((*(*self)).clone()),
+                inner: &mut *self.inner.get(),
+            }
+        }
+    }
+    /// Free all old versions of the data.  Because this method
+    /// requires a mutable reference, it is guaranteed that no
+    /// references exist.
+    pub fn clean(&mut self) {
+        if self.have_borrowed.get() {
+            self.have_borrowed.set(false);
+            unsafe {
+                let mut inner = &mut *self.inner.get();
+                inner.borrow_count -= 1;
+                if inner.borrow_count == 0 {
+                    inner.old = Vec::new();
+                }
+            }
+        }
+    }
+}
+
+impl<T> std::ops::Deref for ArcCell<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        let aleady_borrowed = self.have_borrowed.get();
+        self.have_borrowed.set(true); // indicate we have borrowed this once.
+        unsafe {
+            let mut inner = &mut *self.inner.get();
+            if !aleady_borrowed {
+                inner.borrow_count += 1;
+            }
+            &inner.current
+        }
+    }
+}
+
+impl<T> std::borrow::Borrow<T> for ArcCell<T> {
     fn borrow(&self) -> &T {
         &*self
     }
@@ -96,33 +246,39 @@ impl<T> std::borrow::Borrow<T> for RcCell<T> {
 /// ```
 /// let x = unguarded::BoxCell::new(3);
 /// let y: &usize = &(*x);
-/// *x.write() = 7; // Wow, we are mutating something we have borrowed!
+/// *x.update() = 7; // Wow, we are mutating something we have borrowed!
 /// assert_eq!(*y, 3); // the old reference is still valid.
 /// assert_eq!(*x, 7); // but the pointer now points to the new value.
 /// ```
-pub struct BoxCell<T>(UnsafeCell<BoxCellInner<T>>);
+pub struct BoxCell<T> {
+    inner: UnsafeCell<BoxCellInner<T>>,
+}
 pub struct BoxCellInner<T> {
     current: Box<T>,
     old: Vec<Box<T>>,
+    borrow_count: usize,
 }
 
 impl<T: Clone> BoxCell<T> {
     pub fn new(value: T) -> BoxCell<T> {
-        BoxCell( UnsafeCell::new(BoxCellInner {
-            current: Box::new(value),
-            old: Vec::new(),
-        }))
+        BoxCell {
+            inner: UnsafeCell::new(BoxCellInner {
+                current: Box::new(value),
+                old: Vec::new(),
+                borrow_count: 0,
+            }),
+        }
     }
     /// Make a copy of the data and return a reference.
     ///
     /// When the guard is dropped, `self` will be updated.  There is
     /// no protection against two simultaneous writes.  The one that
     /// drops second will "win".
-    pub fn write<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
+    pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
         unsafe {
             Guard {
                 value: Box::new((*self).clone()),
-                inner: &mut *self.0.get(),
+                inner: &mut *self.inner.get(),
             }
         }
     }
@@ -131,7 +287,7 @@ impl<T: Clone> BoxCell<T> {
     /// references exist.
     pub fn clean(&mut self) {
         unsafe {
-            (*self.0.get()).old = Vec::new();
+            (*self.inner.get()).old = Vec::new();
         }
     }
 }
@@ -149,7 +305,7 @@ impl<T: Clone> std::borrow::BorrowMut<T> for BoxCell<T> {
         // don't need to bother cloning the data, since (again) there
         // are no other references out there.  Yay.
         unsafe {
-            let b = &mut (*self.0.get());
+            let b = &mut (*self.inner.get());
             b.old = Vec::new();
             b.current.borrow_mut()
         }
@@ -160,7 +316,7 @@ impl<T> std::ops::Deref for BoxCell<T> {
     type Target = T;
     fn deref(&self) -> &T {
         unsafe {
-            &(*self.0.get()).current
+            &(*self.inner.get()).current
         }
     }
 }
