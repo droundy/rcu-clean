@@ -1,7 +1,11 @@
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Mutex;
 
-/// An owned pointer that allows interior mutability
+/// An threadsafe owned pointer that allows interior mutability
+///
+/// The [BoxCellSync] is functionally equivalent to `Box<Mutex<T>>`,
+/// except that reads (of the old value) may happen while a write is
+/// taking place.
 ///
 /// Read access using `[BoxCellSync]` is an atomic pointer read..
 ///

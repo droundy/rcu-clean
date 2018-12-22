@@ -54,9 +54,7 @@
 //! will be needed.
 
 use std::cell::{UnsafeCell, Cell};
-use std::rc::Rc;
 use std::sync::{Arc};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 mod boxcell;
 pub use crate::boxcell::BoxCell;
@@ -64,99 +62,8 @@ pub use crate::boxcell::BoxCell;
 mod boxcellsync;
 pub use crate::boxcellsync::BoxCellSync;
 
-/// A reference counted pointer that allows interior mutability
-///
-/// An [RcCell] is currently the size of a five pointers and has an
-/// additial layer of indirection.  Its size could be reduced at the
-/// cost of a bit of code complexity if that were deemed worthwhile.
-/// By using a linked list of old values, we could save a couple of
-/// words.  Read access using `RcCell` has one additional indirection.
-
-/// ```
-/// let x = unguarded::RcCell::new(3);
-/// let y: &usize = &(*x);
-/// let z = x.clone();
-/// *x.update() = 7; // Wow, we are mutating something we have borrowed!
-/// assert_eq!(*y, 3); // the old reference is still valid.
-/// assert_eq!(*x, 7); // but the pointer now points to the new value.
-/// assert_eq!(*z, 7); // but the cloned pointer also points to the new value.
-/// ```
-
-pub struct RcCell<T> {
-    inner: Rc<UnsafeCell<BoxCellInner<T>>>,
-    have_borrowed: AtomicBool,
-}
-
-impl<T: Clone> Clone for RcCell<T> {
-    fn clone(&self) -> Self {
-        RcCell {
-            inner: self.inner.clone(),
-            have_borrowed: AtomicBool::new(false),
-        }
-    }
-}
-
-impl<T: Clone> RcCell<T> {
-    pub fn new(value: T) -> RcCell<T> {
-        RcCell {
-            inner: Rc::new(UnsafeCell::new(BoxCellInner {
-                current: Box::new(value),
-                old: Vec::new(),
-                borrow_count: 0,
-            })),
-            have_borrowed: AtomicBool::new(false),
-        }
-    }
-    /// Make a copy of the data and return a reference.
-    ///
-    /// When the guard is dropped, `self` will be updated.  There is
-    /// no protection against two simultaneous updates.  The one that
-    /// drops second will "win".
-    pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
-        unsafe {
-            Guard {
-                value: Box::new((*(*self)).clone()),
-                inner: &mut *self.inner.get(),
-            }
-        }
-    }
-    /// Free all old versions of the data.  Because this method
-    /// requires a mutable reference, it is guaranteed that no
-    /// references exist.
-    pub fn clean(&mut self) {
-        if self.have_borrowed.load(Ordering::Acquire) {
-            unsafe {
-                let mut inner = &mut *self.inner.get();
-                inner.borrow_count -= 1;
-                if inner.borrow_count == 0 {
-                    inner.old = Vec::new();
-                }
-            }
-            self.have_borrowed.store(false, Ordering::Release);
-        }
-    }
-}
-
-impl<T> std::ops::Deref for RcCell<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        let aleady_borrowed = self.have_borrowed.load(Ordering::Acquire);
-        unsafe {
-            let mut inner = &mut *self.inner.get();
-            if !aleady_borrowed {
-                inner.borrow_count += 1;
-                self.have_borrowed.store(true, Ordering::Release); // indicate we have borrowed this once.
-            }
-            &inner.current
-        }
-    }
-}
-
-impl<T> std::borrow::Borrow<T> for RcCell<T> {
-    fn borrow(&self) -> &T {
-        &*self
-    }
-}
+mod rccell;
+pub use crate::rccell::RcCell;
 
 /// A thread-safe reference counted pointer that allows interior mutability
 ///

@@ -2,11 +2,15 @@ use std::cell::{Cell, RefCell};
 
 /// An owned pointer that allows interior mutability
 ///
+/// The [BoxCell] is functionally roughly equivalent to `Box<RefCell<T>>`,
+/// except that reads (of the old value) may happen while a write is
+/// taking place..
+///
 /// A [BoxCell] is currently the size of a four pointers.  Its size
 /// could be decreased at the cost of a bit of code complexity if that
 /// were deemed worthwhile.  By using a linked list of old values, we
-/// could bring the common case down to 2 pointers.  Read access using
-/// `BoxCell` is the same as for `Box`.
+/// could bring the common case down to 2 pointers in the common case.
+/// Read access using `BoxCell` is the same as for `Box`.
 ///
 /// The main thing that simplifies and speeds up `[BoxCell]` is that
 /// it cannot be either cloned or shared across threads.  Thus we
@@ -42,10 +46,10 @@ impl<T: Clone> BoxCell<T> {
     /// Make a copy of the data and return a reference.
     ///
     /// When the guard is dropped, `self` will be updated.  There is
-    /// no protection against two simultaneous writes.  The one that
+    /// no protection against two simultaneous updates.  The one that
     /// drops second will "win".
     pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
-        BoxGuard {
+        Guard {
             value: Box::into_raw(Box::new((*self).clone())),
             boxcell: self,
             guard: self.old.borrow_mut(),
@@ -92,23 +96,23 @@ impl<T> std::ops::Deref for BoxCell<T> {
     }
 }
 
-struct BoxGuard<'a,T: Clone> {
+struct Guard<'a,T: Clone> {
     value: *mut T,
     boxcell: &'a BoxCell<T>,
     guard: std::cell::RefMut<'a,Vec<Box<T>>>,
 }
-impl<'a,T: Clone> std::ops::Deref for BoxGuard<'a,T> {
+impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
     type Target = T;
     fn deref(&self) -> &T {
         unsafe { &*self.value }
     }
 }
-impl<'a,T: Clone> std::ops::DerefMut for BoxGuard<'a,T> {
+impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.value }
     }
 }
-impl<'a,T: Clone> Drop for BoxGuard<'a,T> {
+impl<'a,T: Clone> Drop for Guard<'a,T> {
     fn drop(&mut self) {
         let oldvalue = self.boxcell.current.get();
         self.boxcell.current.set(self.value);
