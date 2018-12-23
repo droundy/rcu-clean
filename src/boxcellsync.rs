@@ -46,7 +46,7 @@ impl<T: Clone> BoxCellSync<T> {
     /// no protection against two simultaneous writes.  The one that
     /// drops second will "win".
     pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
-        BoxGuard {
+        Guard {
             value: Box::into_raw(Box::new((*self).clone())),
             boxcell: self,
             guard: self.old.lock().unwrap(),
@@ -93,23 +93,23 @@ impl<T> std::ops::Deref for BoxCellSync<T> {
     }
 }
 
-struct BoxGuard<'a,T: Clone> {
+struct Guard<'a,T: Clone> {
     value: *mut T,
     boxcell: &'a BoxCellSync<T>,
     guard: std::sync::MutexGuard<'a,Vec<Box<T>>>,
 }
-impl<'a,T: Clone> std::ops::Deref for BoxGuard<'a,T> {
+impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
     type Target = T;
     fn deref(&self) -> &T {
         unsafe { &*self.value }
     }
 }
-impl<'a,T: Clone> std::ops::DerefMut for BoxGuard<'a,T> {
+impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.value }
     }
 }
-impl<'a,T: Clone> Drop for BoxGuard<'a,T> {
+impl<'a,T: Clone> Drop for Guard<'a,T> {
     fn drop(&mut self) {
         self.value = self.boxcell.current.swap(self.value, Ordering::Release);
         self.guard.push(unsafe { Box::from_raw(self.value) });
