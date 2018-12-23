@@ -64,3 +64,73 @@ pub use crate::rccell::RcCell;
 
 //mod arccell;
 //pub use crate::arccell::ArcCell;
+
+pub trait RCU<'a> {
+    type Target: 'a;
+    type OldGuard: 'a + std::ops::DerefMut<Target=Vec<Box<Self::Target>>>;
+    fn get_raw(&self) -> *mut Self::Target;
+    /// Set a new value, and return the old one.
+    fn set_raw(&self, new: *mut Self::Target) -> *mut Self::Target;
+    fn get_old_guard(&'a self) -> Self::OldGuard;
+}
+
+#[macro_export]
+macro_rules! impl_rcu {
+    ($t:ident) => {
+        impl<T> std::ops::Deref for $t<T> {
+            type Target = T;
+            fn deref(&self) -> &T {
+                unsafe { &*self.get_raw() }
+            }
+        }
+        impl<T> std::borrow::Borrow<T> for $t<T> {
+            fn borrow(&self) -> &T {
+                &*self
+            }
+        }
+        impl<T> Drop for $t<T> {
+            fn drop(&mut self) {
+                // this frees the current value of the pointer.  It is acquire
+                // because the contents of the pointer must be up to date so
+                // the drop of T doesn't do anything crazy.
+                unsafe { Box::from_raw(self.get_raw()); }
+            }
+        }
+
+        impl<T: Clone> $t<T> {
+            /// Make a copy of the data and return a mutable guarded reference.
+            ///
+            /// When the guard is dropped, `self` will be updated.
+            pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
+                Guard {
+                    value: Box::into_raw(Box::new((*self).clone())),
+                    ptr: self,
+                    guard: self.get_old_guard(),
+                }
+            }
+        }
+
+        struct Guard<'a,T: Clone> {
+            value: *mut T,
+            ptr: &'a $t<T>,
+            guard: < $t<T> as RCU<'a> >::OldGuard,
+        }
+        impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
+            type Target = T;
+            fn deref(&self) -> &T {
+                unsafe { &*self.value }
+            }
+        }
+        impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
+            fn deref_mut(&mut self) -> &mut T {
+                unsafe { &mut *self.value }
+            }
+        }
+        impl<'a,T: Clone> Drop for Guard<'a,T> {
+            fn drop(&mut self) {
+                let oldvalue = self.ptr.set_raw(self.value);
+                self.guard.push(unsafe { Box::from_raw(oldvalue) });
+            }
+        }
+    }
+}

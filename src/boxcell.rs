@@ -1,4 +1,6 @@
 use std::cell::{Cell, RefCell};
+use crate::{RCU};
+
 
 /// An owned pointer that allows interior mutability
 ///
@@ -27,32 +29,13 @@ pub struct BoxCell<T> {
     current: Cell<*mut T>,
     old: RefCell<Vec<Box<T>>>,
 }
-impl<T> Drop for BoxCell<T> {
-    fn drop(&mut self) {
-        // this frees the current value of the pointer.  It is acquire
-        // because the contents of the pointer must be up to date so
-        // the drop of T doesn't do anything crazy.
-        unsafe { Box::from_raw(self.current.get()); }
-    }
-}
 
 impl<T: Clone> BoxCell<T> {
+    /// Allocate a new BoxCell.
     pub fn new(value: T) -> BoxCell<T> {
         BoxCell {
             current: Cell::new(Box::into_raw(Box::new(value))),
             old: RefCell::new(Vec::new()),
-        }
-    }
-    /// Make a copy of the data and return a reference.
-    ///
-    /// When the guard is dropped, `self` will be updated.  There is
-    /// no protection against two simultaneous updates.  The one that
-    /// drops second will "win".
-    pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
-        Guard {
-            value: Box::into_raw(Box::new((*self).clone())),
-            boxcell: self,
-            guard: self.old.borrow_mut(),
         }
     }
     /// Free all old versions of the data.  Because this method
@@ -63,11 +46,22 @@ impl<T: Clone> BoxCell<T> {
     }
 }
 
-impl<T> std::borrow::Borrow<T> for BoxCell<T> {
-    fn borrow(&self) -> &T {
-        &*self
+impl<'a,T: 'a> RCU<'a> for BoxCell<T> {
+    type Target = T;
+    type OldGuard = std::cell::RefMut<'a, Vec<Box<T>>>;
+    fn get_raw(&self) -> *mut T {
+        self.current.get()
+    }
+    fn set_raw(&self, new: *mut T) -> *mut T {
+        let v = self.current.get();
+        self.current.set(new);
+        v
+    }
+    fn get_old_guard(&'a self) -> Self::OldGuard {
+        self.old.borrow_mut()
     }
 }
+crate::impl_rcu!(BoxCell);
 
 impl<T: Clone> std::borrow::BorrowMut<T> for BoxCell<T> {
     fn borrow_mut(&mut self) -> &mut T {
@@ -80,42 +74,5 @@ impl<T: Clone> std::borrow::BorrowMut<T> for BoxCell<T> {
         // have exclusive access to this BoxCell, so there must be
         // some other synchronization done.
         unsafe { &mut *self.current.get() }
-    }
-}
-
-impl<T> std::ops::Deref for BoxCell<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        unsafe {
-            // I think I need to Acquire here because otherwise it may
-            // be possible to update a pointer and then have the new
-            // pointer value visible when the bytes that are pointed
-            // to are still incorrect.
-            &*self.current.get()
-        }
-    }
-}
-
-struct Guard<'a,T: Clone> {
-    value: *mut T,
-    boxcell: &'a BoxCell<T>,
-    guard: std::cell::RefMut<'a,Vec<Box<T>>>,
-}
-impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        unsafe { &*self.value }
-    }
-}
-impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.value }
-    }
-}
-impl<'a,T: Clone> Drop for Guard<'a,T> {
-    fn drop(&mut self) {
-        let oldvalue = self.boxcell.current.get();
-        self.boxcell.current.set(self.value);
-        self.guard.push(unsafe { Box::from_raw(oldvalue) });
     }
 }
