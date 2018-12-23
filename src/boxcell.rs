@@ -38,12 +38,6 @@ impl<T: Clone> BoxCell<T> {
             old: RefCell::new(Vec::new()),
         }
     }
-    /// Free all old versions of the data.  Because this method
-    /// requires a mutable reference, it is guaranteed that no
-    /// references exist.
-    pub fn clean(&mut self) {
-        *self.old.borrow_mut() = Vec::new();
-    }
 }
 
 impl<'a,T: 'a> RCU<'a> for BoxCell<T> {

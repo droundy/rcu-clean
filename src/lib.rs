@@ -72,6 +72,12 @@ pub trait RCU<'a> {
     /// Set a new value, and return the old one.
     fn set_raw(&self, new: *mut Self::Target) -> *mut Self::Target;
     fn get_old_guard(&'a self) -> Self::OldGuard;
+
+    /// Release any references that we might have taken.  Return true
+    /// if the old data may be freed.
+    fn release(&mut self) -> bool {
+        true
+    }
 }
 
 #[macro_export]
@@ -103,9 +109,17 @@ macro_rules! impl_rcu {
             /// When the guard is dropped, `self` will be updated.
             pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
                 Guard {
-                    value: Box::into_raw(Box::new((*self).clone())),
+                    value: Box::into_raw(Box::new((*(*self)).clone())),
                     ptr: self,
                     guard: self.get_old_guard(),
+                }
+            }
+            /// Free all old versions of the data if possible.  Because this
+            /// method requires a mutable reference, it is guaranteed that no
+            /// references exist to this particular smart pointer.
+            pub fn clean(&mut self) {
+                if self.release() {
+                    *self.get_old_guard() = Vec::new();
                 }
             }
         }

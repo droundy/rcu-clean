@@ -48,12 +48,6 @@ impl<T: Clone> BoxCellSync<T> {
             old: Mutex::new(Vec::new()),
         }
     }
-    /// Free all old versions of the data.  Because this method
-    /// requires a mutable reference, it is guaranteed that no
-    /// references exist.
-    pub fn clean(&mut self) {
-        *self.old.lock().unwrap() = Vec::new();
-    }
 }
 
 impl<T: Clone> std::borrow::BorrowMut<T> for BoxCellSync<T> {

@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use crate::RCU;
 
 /// A reference counted pointer that allows interior mutability
 ///
@@ -42,15 +43,36 @@ pub struct Inner<T> {
     old: RefCell<Vec<Box<T>>>,
     borrow_count: Cell<usize>,
 }
-impl<T> Drop for Inner<T> {
-    fn drop(&mut self) {
-        // this frees the current value of the pointer.  It is acquire
-        // because the contents of the pointer must be up to date so
-        // the drop of T doesn't do anything crazy.
-        unsafe { Box::from_raw(self.current.get()); }
+
+impl<'a,T: 'a> RCU<'a> for RcCell<T> {
+    type Target = T;
+    type OldGuard = std::cell::RefMut<'a, Vec<Box<T>>>;
+    fn get_raw(&self) -> *mut T {
+        let aleady_borrowed = self.have_borrowed.get();
+        if !aleady_borrowed {
+            self.inner.borrow_count.set(self.inner.borrow_count.get() + 1);
+            self.have_borrowed.set(true); // indicate we have borrowed this once.
+        }
+        self.inner.current.get()
+    }
+    fn set_raw(&self, new: *mut T) -> *mut T {
+        let v = self.inner.current.get();
+        self.inner.current.set(new);
+        v
+    }
+    fn get_old_guard(&'a self) -> Self::OldGuard {
+        self.inner.old.borrow_mut()
+    }
+    fn release(&mut self) -> bool {
+        if !self.have_borrowed.get() {
+            return false;
+        }
+        self.have_borrowed.set(false);
+        self.inner.borrow_count.set(self.inner.borrow_count.get() - 1);
+        self.inner.borrow_count.get() == 0
     }
 }
-
+crate::impl_rcu!(RcCell);
 
 impl<T: Clone> RcCell<T> {
     pub fn new(value: T) -> RcCell<T> {
@@ -63,19 +85,6 @@ impl<T: Clone> RcCell<T> {
             have_borrowed: Cell::new(false),
         }
     }
-    /// Make a copy of the data and return a reference.
-    ///
-    /// When the guard is dropped, `self` will be updated.  There is
-    /// no protection against two simultaneous updates.  The one that
-    /// drops second will "win".
-    pub fn update<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target=T> {
-        let g: Guard<'a,T> = Guard {
-            value: Box::into_raw(Box::new((*(*self)).clone())),
-            boxcell: self,
-            guard: self.inner.old.borrow_mut(),
-        };
-        g
-    }
     /// Free all old versions of the data if possible.  Because this
     /// method requires a mutable reference, it is guaranteed that no
     /// references exist.
@@ -83,50 +92,9 @@ impl<T: Clone> RcCell<T> {
         if self.have_borrowed.get() {
             self.inner.borrow_count.set(self.inner.borrow_count.get() - 1);
             if self.inner.borrow_count.get() == 0 {
-                *self.inner.old.borrow_mut() = Vec::new();
+                *self.get_old_guard() = Vec::new();
             }
             self.have_borrowed.set(false);
         }
-    }
-}
-impl<T> std::ops::Deref for RcCell<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        let aleady_borrowed = self.have_borrowed.get();
-        if !aleady_borrowed {
-            self.inner.borrow_count.set(self.inner.borrow_count.get() + 1);
-            self.have_borrowed.set(true); // indicate we have borrowed this once.
-        }
-        unsafe { &*self.inner.current.get() }
-    }
-}
-
-impl<T> std::borrow::Borrow<T> for RcCell<T> {
-    fn borrow(&self) -> &T {
-        &*self
-    }
-}
-
-struct Guard<'a,T: Clone> {
-    value: *mut T,
-    boxcell: &'a RcCell<T>,
-    guard: std::cell::RefMut<'a,Vec<Box<T>>>,
-}
-impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        unsafe { &*self.value }
-    }
-}
-impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.value }
-    }
-}
-impl<'a,T: Clone> Drop for Guard<'a,T> {
-    fn drop(&mut self) {
-        let oldvalue = self.boxcell.inner.current.get();
-        self.boxcell.inner.current.set(self.value);
-        self.guard.push(unsafe { Box::from_raw(oldvalue) });
     }
 }
