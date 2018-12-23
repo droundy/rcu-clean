@@ -1,7 +1,6 @@
 use std::cell::{Cell, RefCell};
 use crate::{RCU};
 
-
 /// An owned pointer that allows interior mutability
 ///
 /// The [BoxCell] is functionally roughly equivalent to `Box<RefCell<T>>`,

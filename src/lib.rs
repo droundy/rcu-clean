@@ -62,8 +62,8 @@ pub use crate::boxcellsync::BoxCellSync;
 mod rccell;
 pub use crate::rccell::RcCell;
 
-//mod arccell;
-//pub use crate::arccell::ArcCell;
+mod arccell;
+pub use crate::arccell::ArcCell;
 
 pub trait RCU<'a> {
     type Target: 'a;
