@@ -21,14 +21,12 @@ use crate::{RCU};
 /// ```
 pub struct ArcCell<T> {
     inner: Arc<Inner<T>>,
-    previous_ptr: Cell<*mut T>,
     have_borrowed: Cell<bool>,
 }
 impl<T: Clone> Clone for ArcCell<T> {
     fn clone(&self) -> Self {
         ArcCell {
             inner: self.inner.clone(),
-            previous_ptr: self.previous_ptr.clone(),
             have_borrowed: Cell::new(false),
         }
     }
@@ -46,22 +44,8 @@ impl<'a,T: 'a> RCU<'a> for ArcCell<T> {
         if !self.have_borrowed.get() {
             self.inner.borrow_count.fetch_add(1, Ordering::Relaxed);
             self.have_borrowed.set(true);
-            let v = self.inner.current.load(Ordering::Acquire);
-            self.previous_ptr.set(v);
-            v
-        } else {
-            let v = self.inner.current.load(Ordering::Relaxed);
-            if v == self.previous_ptr.get() {
-                // The relaxed load was good enough, since we've
-                // already gotten this data before.
-                return v;
-            }
-            self.previous_ptr.set(v);
-            // We need to load the pointer again, since it has
-            // changed, with acquire semantics, to ensure we get the
-            // data that it points to.
-            self.inner.current.load(Ordering::Acquire)
         }
+        self.inner.current.load(Ordering::Acquire)
     }
     fn set_raw(&self, new: *mut T) -> *mut T {
         self.inner.current.swap(new, Ordering::Release)
@@ -83,7 +67,6 @@ impl<T: Clone> ArcCell<T> {
     pub fn new(value: T) -> ArcCell<T> {
         ArcCell {
             have_borrowed: Cell::new(false),
-            previous_ptr: Cell::new(std::ptr::null_mut()),
             inner: Arc::new(Inner {
                 current: AtomicPtr::new(Box::into_raw(Box::new(value))),
                 old: Mutex::new(Vec::new()),
