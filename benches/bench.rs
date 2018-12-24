@@ -246,7 +246,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     }));
 
     funs.reverse();
-    c.bench_functions("sum", funs, 1<<10);
+    c.bench_functions("sum", funs, 1000);
 }
 
 criterion_group!(benches, criterion_benchmark);
