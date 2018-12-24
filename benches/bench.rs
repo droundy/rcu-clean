@@ -6,247 +6,63 @@ use unguarded::{BoxCell, BoxCellSync, RcCell, ArcCell};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
+type RcRefCell<T> = Rc<RefCell<T>>;
+type BoxRefCell<T> = Box<RefCell<T>>;
+type BoxMutex<T> = Box<Mutex<T>>;
+type ArcMutex<T> = Arc<Mutex<T>>;
+
+macro_rules! benchme {
+    ($name:expr, $t:ident, $new:expr, $deref:expr) => {
+        criterion::Fun::new($name, |b,&n_to_copy| {
+            b.iter_with_setup(|| {
+                let mut data: Vec<$t<usize>> = Vec::new();
+                for i in 0..n_to_copy {
+                    data.push($new(i));
+                }
+                let mut total: usize = 0;
+                for x in data.iter() {
+                    total += $deref(x);
+                }
+                data[0] = $new(total);
+                data
+            }, |data| {
+                let mut total: usize = 0;
+                for x in data.iter() {
+                    total += $deref(x);
+                }
+                total
+            });
+        })
+    }
+}
+
 fn criterion_benchmark(c: &mut Criterion) {
-    let mut funs = vec![criterion::Fun::new("Box", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<Box<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(Box::new(i));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    })];
-    funs.push(criterion::Fun::new("Rc", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<Rc<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(Rc::new(i));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
+    let mut funs: Vec<criterion::Fun<usize>> = Vec::new();
+    funs.push(benchme!("Box", Box, Box::new, |x: &Box<usize>| **x));
+    funs.push(benchme!("Rc", Rc, Rc::new, |x: &Rc<usize>| **x));
+    funs.push(benchme!("Arc", Arc, Arc::new, |x: &Arc<usize>| **x));
 
-    funs.push(criterion::Fun::new("Arc", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<Arc<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(Arc::new(i));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
+    funs.push(benchme!("BoxRefCell", BoxRefCell, |a| Box::new(RefCell::new(a)),
+                       |x: &BoxRefCell<usize>| -> usize { *x.borrow() }));
+    funs.push(benchme!("RcRefCell", RcRefCell, |a| Rc::new(RefCell::new(a)),
+                       |x: &RcRefCell<usize>| -> usize { *x.borrow() }));
 
-    funs.push(criterion::Fun::new("Box<RefCell>", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<Box<RefCell<usize>>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(Box::new(RefCell::new(i)));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += *x.borrow();
-            }
-            total
-        });
-    }));
+    funs.push(benchme!("BoxMutex", BoxMutex, |a| Box::new(Mutex::new(a)),
+                       |x: &BoxMutex<usize>| -> usize { *x.lock().unwrap() }));
+    funs.push(benchme!("ArcMutex", ArcMutex, |a| Arc::new(Mutex::new(a)),
+                       |x: &ArcMutex<usize>| -> usize { *x.lock().unwrap() }));
 
-    funs.push(criterion::Fun::new("Rc<RefCell>", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<Rc<RefCell<usize>>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(Rc::new(RefCell::new(i)));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += *x.borrow();
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("Box<Mutex>", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<Box<Mutex<usize>>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(Box::new(Mutex::new(i)));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += *x.lock().unwrap();
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("Arc<Mutex>", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<Arc<Mutex<usize>>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(Arc::new(Mutex::new(i)));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += *x.lock().unwrap();
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("BoxCell", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<BoxCell<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(BoxCell::new(i));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("fresh RcCell", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<RcCell<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(RcCell::new(i));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("RcCell", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<RcCell<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(RcCell::new(i));
-            }
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            data[0] = RcCell::new(total);
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("fresh BoxCellSync", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<BoxCellSync<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(BoxCellSync::new(i));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("BoxCellSync", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<BoxCellSync<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(BoxCellSync::new(i));
-            }
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            data[0] = BoxCellSync::new(total);
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("fresh ArcCell", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<ArcCell<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(ArcCell::new(i));
-            }
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
-
-    funs.push(criterion::Fun::new("ArcCell", |b,&n_to_copy| {
-        b.iter_with_setup(|| {
-            let mut data: Vec<ArcCell<usize>> = Vec::new();
-            for i in 0..n_to_copy {
-                data.push(ArcCell::new(i));
-            }
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            data[0] = ArcCell::new(total);
-            data
-        }, |data| {
-            let mut total: usize = 0;
-            for x in data.iter() {
-                total += **x;
-            }
-            total
-        });
-    }));
+    funs.push(benchme!("BoxCellSync", BoxCellSync, BoxCellSync::new,
+                       |x: &BoxCellSync<usize>| **x));
+    funs.push(benchme!("BoxCell", BoxCell, BoxCell::new,
+                       |x: &BoxCell<usize>| **x));
+    funs.push(benchme!("RcCell", RcCell, RcCell::new,
+                       |x: &RcCell<usize>| **x));
+    funs.push(benchme!("ArcCell", ArcCell, ArcCell::new,
+                       |x: &ArcCell<usize>| **x));
 
     funs.reverse();
-    c.bench_functions("sum", funs, 1000);
+    c.bench_functions("sum", funs, 1000000);
 }
 
 criterion_group!(benches, criterion_benchmark);
