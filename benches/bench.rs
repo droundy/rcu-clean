@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 
-use unguarded::{BoxCell, BoxCellSync, RcCell, ArcCell};
+use unguarded::{BoxCell, BoxCellSync, RcCell, ArcCell, RcNew};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
@@ -56,10 +56,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                        |x: &BoxCellSync<usize>| **x));
     funs.push(benchme!("BoxCell", BoxCell, BoxCell::new,
                        |x: &BoxCell<usize>| **x));
-    funs.push(benchme!("RcCell", RcCell, RcCell::new,
-                       |x: &RcCell<usize>| **x));
     funs.push(benchme!("ArcCell", ArcCell, ArcCell::new,
                        |x: &ArcCell<usize>| **x));
+    funs.push(benchme!("RcCell", RcCell, RcCell::new,
+                       |x: &RcCell<usize>| **x));
+    funs.push(benchme!("RcNew", RcNew, RcNew::new,
+                       |x: &RcNew<usize>| **x));
 
     funs.reverse();
     c.bench_functions("sum", funs, 1000);

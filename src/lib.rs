@@ -62,6 +62,9 @@ pub use crate::boxcellsync::BoxCellSync;
 mod rccell;
 pub use crate::rccell::RcCell;
 
+mod rcnew;
+pub use crate::rcnew::RcNew;
+
 mod arccell;
 pub use crate::arccell::ArcCell;
 
