@@ -11,8 +11,41 @@ macro_rules! testrc {
     }
 }
 
+macro_rules! testany {
+    ($name:ident, $t:ident) => {
+        #[test]
+        fn $name() {
+            let ptr = $t::new((4,4));
+            assert_eq!(ptr.0, ptr.1);
+            let foo = &ptr;
+            assert_eq!(foo.0, 4);
+            *ptr.update() = (5,5);
+            assert_eq!(ptr.0, 5);
+            assert_eq!(foo.0, 5);
+            {
+                let mut bar = ptr.update();
+                assert_eq!(ptr.0, 5);
+                assert_eq!(foo.0, 5);
+                assert_eq!(bar.0, 5);
+                bar.0 = 7;
+                assert_eq!(ptr.0, 5);
+                assert_eq!(foo.0, 5);
+                assert_eq!(bar.0, 7);
+            }
+            assert_eq!(ptr.0, 7);
+            assert_eq!(foo.0, 7);
+        }
+    }
+}
+
 // testrc!(rccell, RcCell);
 
 testrc!(rcnew, RcNew);
 
 // testrc!(arccell, ArcCell);
+
+testany!(rcnew_any, RcNew);
+testany!(rccell_any, RcCell);
+testany!(arccell_any, ArcCell);
+testany!(boxcell_any, BoxCell);
+testany!(boxcellsync_any, BoxCellSync);
