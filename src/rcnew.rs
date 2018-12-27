@@ -114,9 +114,8 @@ impl<'a,T: Clone> RcNew<T> {
             unsafe {
                 std::mem::swap(&mut *self.inner.list.value.get(),
                                &mut *(*self.inner.list.next.get()).value.get());
-                Box::from_raw(self.inner.list.next.get());
+                Box::from_raw(self.inner.list.next.replace(null_mut()));
             }
-            self.inner.list.next.set(null_mut());
         }
     }
 }
