@@ -1,6 +1,6 @@
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, UnsafeCell};
 use std::rc::Rc;
-use crate::RCU;
+use std::ptr::null_mut;
 
 /// A reference counted pointer that allows interior mutability
 ///
@@ -39,62 +39,115 @@ impl<T: Clone> Clone for RcNew<T> {
     }
 }
 pub struct Inner<T> {
-    current: Cell<*mut T>,
-    old: RefCell<Vec<Box<T>>>,
     borrow_count: Cell<usize>,
+    am_writing: Cell<bool>,
+    list: List<T>
+}
+pub struct List<T> {
+    value: UnsafeCell<T>,
+    next: Cell<*mut List<T>>,
 }
 
-impl<'a,T: 'a> RCU<'a> for RcNew<T> {
+impl<T> std::ops::Deref for RcNew<T> {
     type Target = T;
-    type OldGuard = std::cell::RefMut<'a, Vec<Box<T>>>;
-    fn get_raw(&self) -> *mut T {
+    fn deref(&self) -> &T {
         let aleady_borrowed = self.have_borrowed.get();
         if !aleady_borrowed {
             self.inner.borrow_count.set(self.inner.borrow_count.get() + 1);
             self.have_borrowed.set(true); // indicate we have borrowed this once.
         }
-        self.inner.current.get()
-    }
-    fn set_raw(&self, new: *mut T) -> *mut T {
-        let v = self.inner.current.get();
-        self.inner.current.set(new);
-        v
-    }
-    fn get_old_guard(&'a self) -> Self::OldGuard {
-        self.inner.old.borrow_mut()
-    }
-    fn release(&mut self) -> bool {
-        if !self.have_borrowed.get() {
-            return false;
+        if self.inner.list.next.get() == null_mut() {
+            unsafe { &*self.inner.list.value.get() }
+        } else {
+            unsafe { &* (*self.inner.list.next.get()).value.get() }
         }
-        self.have_borrowed.set(false);
-        self.inner.borrow_count.set(self.inner.borrow_count.get() - 1);
-        self.inner.borrow_count.get() == 0
     }
 }
-crate::impl_rcu!(RcNew);
-
-impl<T: Clone> RcNew<T> {
-    pub fn new(value: T) -> RcNew<T> {
-        RcNew {
-            inner: Rc::new(Inner {
-                current: Cell::new(Box::into_raw(Box::new(value))),
-                old: RefCell::new(Vec::new()),
-                borrow_count: Cell::new(0),
-            }),
-            have_borrowed: Cell::new(false),
+impl<T> std::borrow::Borrow<T> for RcNew<T> {
+    fn borrow(&self) -> &T {
+        &*self
+    }
+}
+impl<T> Drop for List<T> {
+    fn drop(&mut self) {
+        if self.next.get() != null_mut() {
+            unsafe { Box::from_raw(self.next.get()); }
         }
     }
-    /// Free all old versions of the data if possible.  Because this
-    /// method requires a mutable reference, it is guaranteed that no
-    /// references exist.
-    pub fn clean(&mut self) {
-        if self.have_borrowed.get() {
-            self.inner.borrow_count.set(self.inner.borrow_count.get() - 1);
-            if self.inner.borrow_count.get() == 0 {
-                *self.get_old_guard() = Vec::new();
-            }
-            self.have_borrowed.set(false);
+}
+impl<'a,T: Clone> RcNew<T> {
+    pub fn new(x: T) -> Self {
+        RcNew {
+            have_borrowed: Cell::new(false),
+            inner: Rc::new(Inner {
+                borrow_count: Cell::new(0),
+                am_writing: Cell::new(false),
+                list: List {
+                    value: UnsafeCell::new(x),
+                    next: Cell::new(null_mut()),
+                },
+            }),
         }
+    }
+    pub fn update(&'a self) -> Guard<'a, T> {
+        if self.inner.am_writing.get() {
+            panic!("Cannont update an RcNew twice simultaneously.");
+        }
+        self.inner.am_writing.set(true);
+        Guard {
+            list: Some(List {
+                value: UnsafeCell::new((*(*self)).clone()),
+                next: self.inner.list.next.clone(),
+            }),
+            rc_guts: &self.inner,
+        }
+    }
+    pub fn clean(&mut self) {
+        let aleady_borrowed = self.have_borrowed.get();
+        if aleady_borrowed {
+            self.inner.borrow_count.set(self.inner.borrow_count.get() - 1);
+            self.have_borrowed.set(false); // indicate we have no longer borrowed this.
+        }
+        if self.inner.borrow_count.get() == 0 &&
+            self.inner.list.next.get() != null_mut()
+        {
+            unsafe {
+                std::mem::swap(&mut *self.inner.list.value.get(),
+                               &mut *(*self.inner.list.next.get()).value.get());
+                Box::from_raw(self.inner.list.next.get());
+            }
+            self.inner.list.next.set(null_mut());
+        }
+    }
+}
+
+pub struct Guard<'a,T: Clone> {
+    list: Option<List<T>>,
+    rc_guts: &'a Inner<T>,
+}
+impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        if let Some(ref list) = self.list {
+            unsafe { & *list.value.get() }
+        } else {
+            unreachable!()
+        }
+    }
+}
+impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
+    fn deref_mut(&mut self) -> &mut T {
+        if let Some(ref list) = self.list {
+            unsafe { &mut *list.value.get() }
+        } else {
+            unreachable!()
+        }
+    }
+}
+impl<'a,T: Clone> Drop for Guard<'a,T> {
+    fn drop(&mut self) {
+        let list = std::mem::replace(&mut self.list, None);
+        self.rc_guts.list.next.set(Box::into_raw(Box::new(list.unwrap())));
+        self.rc_guts.am_writing.set(false);
     }
 }
