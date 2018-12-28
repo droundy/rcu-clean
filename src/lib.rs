@@ -65,3 +65,28 @@ pub use crate::rcrcu::RcRcu;
 
 mod arcrcu;
 pub use crate::arcrcu::ArcRcu;
+
+macro_rules! impl_stuff {
+    ($t:ident) => {
+        impl<T: PartialEq> PartialEq for $t<T> {
+            fn eq(&self, other: &$t<T>) -> bool {
+                &(**self) == &(**other)
+            }
+        }
+        impl<T: Eq> Eq for $t<T> {}
+        impl<T: PartialOrd> PartialOrd for $t<T> {
+            fn partial_cmp(&self, other: &$t<T>) -> Option<std::cmp::Ordering> {
+                (**self).partial_cmp(&**other)
+            }
+        }
+        impl<T: Ord> Ord for $t<T> {
+            fn cmp(&self, other: &$t<T>) -> std::cmp::Ordering {
+                (**self).cmp(&**other)
+            }
+        }
+    }
+}
+
+impl_stuff!(BoxRcu);
+impl_stuff!(RcRcu);
+impl_stuff!(ArcRcu);
