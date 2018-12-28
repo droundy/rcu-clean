@@ -25,6 +25,7 @@ pub struct ArcNew<T> {
     have_borrowed: Cell<bool>,
 }
 unsafe impl<T: Send + Sync> Send for ArcNew<T> {}
+unsafe impl<T: Send + Sync> Sync for ArcNew<T> {}
 impl<T: Clone> Clone for ArcNew<T> {
     fn clone(&self) -> Self {
         ArcNew {
