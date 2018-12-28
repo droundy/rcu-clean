@@ -14,7 +14,7 @@ use std::ptr::null_mut;
 /// type if writes are rare (or their speed doesn't matter).
 
 /// ```
-/// let x = unguarded::ArcRcu::new(3);
+/// let x = rcu_clean::ArcRcu::new(3);
 /// let y: &usize = &(*x);
 /// let z = x.clone();
 /// *x.update() = 7; // Wow, we are mutating something we have borrowed!

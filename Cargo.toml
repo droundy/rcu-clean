@@ -1,5 +1,5 @@
 [package]
-name = "unguarded"
+name = "rcu-clean"
 version = "0.1.0"
 authors = ["David Roundy <daveroundy@gmail.com>"]
 edition = "2018"

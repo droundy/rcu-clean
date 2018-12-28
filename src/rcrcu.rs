@@ -11,7 +11,7 @@ use std::ptr::null_mut;
 /// using this.
 ///
 /// ```
-/// let x = unguarded::RcRcu::new(3);
+/// let x = rcu_clean::RcRcu::new(3);
 /// let y: &usize = &(*x);
 /// let z = x.clone();
 /// *x.update() = 7; // Wow, we are mutating something we have borrowed!

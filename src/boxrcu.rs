@@ -14,7 +14,7 @@ use std::ptr::null_mut;
 /// believe it.
 
 /// ```
-/// let x = unguarded::BoxRcu::new(3);
+/// let x = rcu_clean::BoxRcu::new(3);
 /// let y: &usize = &(*x);
 /// *x.update() = 7; // Wow, we are mutating something we have borrowed!
 /// assert_eq!(*y, 3); // the old reference is still valid.

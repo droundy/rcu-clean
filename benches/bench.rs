@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::cell::RefCell;
 
-use unguarded::{BoxRcu, RcRcu, ArcRcu};
+use rcu_clean::{BoxRcu, RcRcu, ArcRcu};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 

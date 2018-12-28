@@ -1,4 +1,4 @@
-use unguarded::{BoxRcu, RcRcu, ArcRcu};
+use rcu_clean::{BoxRcu, RcRcu, ArcRcu};
 
 macro_rules! testrc {
     ($name:ident, $t:ident) => {
