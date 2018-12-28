@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::cell::RefCell;
 
-use unguarded::{BoxCell, BoxCellSync, RcCell, ArcCell, BoxNew, RcNew, ArcNew};
+use unguarded::{BoxNew, RcNew, ArcNew};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
@@ -26,13 +26,13 @@ macro_rules! benchme {
                     total += $deref(x);
                 }
                 data[0] = $new(total);
-                data
-            }, |data| {
+                (data, total)
+            }, |(data, truetot)| {
                 let mut total: usize = 0;
                 for x in data.iter() {
                     total += $deref(x);
                 }
-                total
+                assert_eq!(total, truetot*2);
             });
         })
     }
@@ -40,15 +40,6 @@ macro_rules! benchme {
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut funs: Vec<criterion::Fun<usize>> = Vec::new();
-    funs.push(benchme!("BoxCellSync", BoxCellSync, BoxCellSync::new,
-                       |x: &BoxCellSync<usize>| **x));
-    funs.push(benchme!("BoxCell", BoxCell, BoxCell::new,
-                       |x: &BoxCell<usize>| **x));
-    funs.push(benchme!("ArcCell", ArcCell, ArcCell::new,
-                       |x: &ArcCell<usize>| **x));
-    funs.push(benchme!("RcCell", RcCell, RcCell::new,
-                       |x: &RcCell<usize>| **x));
-
     funs.push(benchme!("BoxRefCell", BoxRefCell, |a| Box::new(RefCell::new(a)),
                        |x: &BoxRefCell<usize>| -> usize { *x.borrow() }));
     funs.push(benchme!("RcRefCell", RcRefCell, |a| Rc::new(RefCell::new(a)),

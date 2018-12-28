@@ -53,26 +53,14 @@
 //! better with "epoch" counting, but in most cases I don't think that
 //! will be needed.
 
-mod boxcell;
-pub use crate::boxcell::BoxCell;
-
-mod boxcellsync;
-pub use crate::boxcellsync::BoxCellSync;
-
-mod rccell;
-pub use crate::rccell::RcCell;
+mod boxnew;
+pub use crate::boxnew::BoxNew;
 
 mod rcnew;
 pub use crate::rcnew::RcNew;
 
-mod arccell;
-pub use crate::arccell::ArcCell;
-
 mod arcnew;
 pub use crate::arcnew::ArcNew;
-
-mod boxnew;
-pub use crate::boxnew::BoxNew;
 
 pub trait RCU<'a> {
     type Target: 'a;
