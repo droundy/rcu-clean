@@ -84,6 +84,16 @@ macro_rules! impl_stuff {
                 (**self).cmp(&**other)
             }
         }
+        impl<T: std::fmt::Debug> std::fmt::Debug for $t<T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+                (**self).fmt(f)
+            }
+        }
+        impl<T: std::fmt::Display> std::fmt::Display for $t<T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+                (**self).fmt(f)
+            }
+        }
     }
 }
 
