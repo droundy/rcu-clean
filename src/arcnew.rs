@@ -3,21 +3,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicPtr, Ordering};
 use std::ptr::null_mut;
 
-/// A reference counted pointer that allows interior mutability
-///
-/// The [ArcNew] is functionally roughly equivalent to `Arc<RefCell<T>>`,
-/// except that reads (of the old value) may happen while a write is
-/// taking place.
+/// A thread-safe reference counted pointer that allows interior mutability
 ///
 /// An [ArcNew] is currently the size of a five pointers and has an
 /// additial layer of indirection.  Its size could be reduced at the
 /// cost of a bit of code complexity if that were deemed worthwhile.
 /// By using a linked list of old values, we could save a couple of
 /// words.  Read access using `ArcNew` has one additional indirection.
-/// Due to this additional indirection, `ArcNew<T>` is probably slower
-/// for read accesses than `Arc<RefCell<T>>`.  The main reason to use
-/// it is for the convenience of not calling `borrow()` on every read.
-///
+
 /// ```
 /// let x = unguarded::ArcNew::new(3);
 /// let y: &usize = &(*x);
@@ -31,6 +24,7 @@ pub struct ArcNew<T> {
     inner: Arc<Inner<T>>,
     have_borrowed: Cell<bool>,
 }
+unsafe impl<T: Send + Sync> Send for ArcNew<T> {}
 impl<T: Clone> Clone for ArcNew<T> {
     fn clone(&self) -> Self {
         ArcNew {
