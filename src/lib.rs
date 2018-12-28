@@ -71,6 +71,9 @@ pub use crate::arccell::ArcCell;
 mod arcnew;
 pub use crate::arcnew::ArcNew;
 
+mod boxnew;
+pub use crate::boxnew::BoxNew;
+
 pub trait RCU<'a> {
     type Target: 'a;
     type OldGuard: 'a + std::ops::DerefMut<Target=Vec<Box<Self::Target>>>;

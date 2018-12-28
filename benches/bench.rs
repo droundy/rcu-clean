@@ -1,15 +1,17 @@
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::cell::RefCell;
 
-use unguarded::{BoxCell, BoxCellSync, RcCell, ArcCell, RcNew, ArcNew};
+use unguarded::{BoxCell, BoxCellSync, RcCell, ArcCell, BoxNew, RcNew, ArcNew};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
 type RcRefCell<T> = Rc<RefCell<T>>;
 type BoxRefCell<T> = Box<RefCell<T>>;
 type BoxMutex<T> = Box<Mutex<T>>;
+type BoxRwLock<T> = Box<RwLock<T>>;
 type ArcMutex<T> = Arc<Mutex<T>>;
+type ArcRwLock<T> = Arc<RwLock<T>>;
 
 macro_rules! benchme {
     ($name:expr, $t:ident, $new:expr, $deref:expr) => {
@@ -38,9 +40,14 @@ macro_rules! benchme {
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut funs: Vec<criterion::Fun<usize>> = Vec::new();
-    funs.push(benchme!("Box", Box, Box::new, |x: &Box<usize>| **x));
-    funs.push(benchme!("Rc", Rc, Rc::new, |x: &Rc<usize>| **x));
-    funs.push(benchme!("Arc", Arc, Arc::new, |x: &Arc<usize>| **x));
+    funs.push(benchme!("BoxCellSync", BoxCellSync, BoxCellSync::new,
+                       |x: &BoxCellSync<usize>| **x));
+    funs.push(benchme!("BoxCell", BoxCell, BoxCell::new,
+                       |x: &BoxCell<usize>| **x));
+    funs.push(benchme!("ArcCell", ArcCell, ArcCell::new,
+                       |x: &ArcCell<usize>| **x));
+    funs.push(benchme!("RcCell", RcCell, RcCell::new,
+                       |x: &RcCell<usize>| **x));
 
     funs.push(benchme!("BoxRefCell", BoxRefCell, |a| Box::new(RefCell::new(a)),
                        |x: &BoxRefCell<usize>| -> usize { *x.borrow() }));
@@ -52,18 +59,22 @@ fn criterion_benchmark(c: &mut Criterion) {
     funs.push(benchme!("ArcMutex", ArcMutex, |a| Arc::new(Mutex::new(a)),
                        |x: &ArcMutex<usize>| -> usize { *x.lock().unwrap() }));
 
-    funs.push(benchme!("BoxCellSync", BoxCellSync, BoxCellSync::new,
-                       |x: &BoxCellSync<usize>| **x));
-    funs.push(benchme!("BoxCell", BoxCell, BoxCell::new,
-                       |x: &BoxCell<usize>| **x));
-    funs.push(benchme!("ArcCell", ArcCell, ArcCell::new,
-                       |x: &ArcCell<usize>| **x));
-    funs.push(benchme!("RcCell", RcCell, RcCell::new,
-                       |x: &RcCell<usize>| **x));
+    funs.push(benchme!("BoxRwLock", BoxRwLock, |a| Box::new(RwLock::new(a)),
+                       |x: &BoxRwLock<usize>| -> usize { *x.read().unwrap() }));
+    funs.push(benchme!("ArcRwLock", ArcRwLock, |a| Arc::new(RwLock::new(a)),
+                       |x: &ArcRwLock<usize>| -> usize { *x.read().unwrap() }));
+
+    funs.push(benchme!("Box", Box, Box::new, |x: &Box<usize>| **x));
+    funs.push(benchme!("Rc", Rc, Rc::new, |x: &Rc<usize>| **x));
+    funs.push(benchme!("Arc", Arc, Arc::new, |x: &Arc<usize>| **x));
+
+
     funs.push(benchme!("RcNew", RcNew, RcNew::new,
-                       |x: &RcNew<usize>| **x));
+                       |x: &RcNew<usize>| **x as usize));
     funs.push(benchme!("ArcNew", ArcNew, ArcNew::new,
-                       |x: &ArcNew<usize>| **x));
+                       |x: &ArcNew<usize>| **x as usize));
+    funs.push(benchme!("BoxNew", BoxNew, BoxNew::new,
+                       |x: &BoxNew<usize>| **x as usize));
 
     funs.reverse();
     c.bench_functions("sum", funs, 1000);
