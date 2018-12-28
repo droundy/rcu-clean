@@ -1,13 +1,17 @@
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::ptr::null_mut;
 
-/// A thread-safe owned pointer that allows interior mutability
+/// An owned pointer that allows interior mutability
 ///
-/// An [BoxRcu] is currently the size of a five pointers and has an
-/// additial layer of indirection.  Its size could be reduced at the
-/// cost of a bit of code complexity if that were deemed worthwhile.
-/// By using a linked list of old values, we could save a couple of
-/// words.  Read access using `BoxRcu` has one additional indirection.
+/// An [BoxRcu] is currently the size of two pointers (plus the
+/// allocated data).  So one pointer of overhead versus a plain old
+/// `Box`.  You will probably want to to occasionally call `[clean]`
+/// to free up copies made when you call `update`.  Or you could just
+/// leak memory, that's cool too.
+///
+/// Our benchmark oddly shows [BoxRcu] reads as being faster than
+/// reads using [Box].  I don't understand this, or particularly
+/// believe it.
 
 /// ```
 /// let x = unguarded::BoxRcu::new(3);

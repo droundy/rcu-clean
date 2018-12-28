@@ -4,18 +4,11 @@ use std::ptr::null_mut;
 
 /// A reference counted pointer that allows interior mutability
 ///
-/// The [RcRcu] is functionally roughly equivalent to `Rc<RefCell<T>>`,
-/// except that reads (of the old value) may happen while a write is
-/// taking place.
-///
-/// An [RcRcu] is currently the size of a five pointers and has an
-/// additial layer of indirection.  Its size could be reduced at the
-/// cost of a bit of code complexity if that were deemed worthwhile.
-/// By using a linked list of old values, we could save a couple of
-/// words.  Read access using `RcRcu` has one additional indirection.
-/// Due to this additional indirection, `RcRcu<T>` is probably slower
-/// for read accesses than `Rc<RefCell<T>>`.  The main reason to use
-/// it is for the convenience of not calling `borrow()` on every read.
+/// The [RcRcu] is functionally roughly equivalent to
+/// `Rc<RefCell<T>>`, except that reads (of the old value) may happen
+/// while a write is taking place.  Reads are actually slightly slower
+/// than an `Rc<RefCell<T>>`, so mostly you gaining ergonomics by
+/// using this.
 ///
 /// ```
 /// let x = unguarded::RcRcu::new(3);

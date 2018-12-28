@@ -5,11 +5,13 @@ use std::ptr::null_mut;
 
 /// A thread-safe reference counted pointer that allows interior mutability
 ///
-/// An [ArcRcu] is currently the size of a five pointers and has an
-/// additial layer of indirection.  Its size could be reduced at the
-/// cost of a bit of code complexity if that were deemed worthwhile.
-/// By using a linked list of old values, we could save a couple of
-/// words.  Read access using `ArcRcu` has one additional indirection.
+/// The [ArcRcu] is functionally roughly equivalent to
+/// `Arc<RwLock<T>>`, except that reads (of the old value) may happen
+/// while a write is taking place.  Reads on an [ArcRcu] are much
+/// faster (by a factor of 2 or 3) than reads on either a
+/// `Arc<RwLock<T>>` or a `Arc<Mutex<T>>`.  So in this case you gain
+/// both ergonomics and read speed.  Writes are slow, so only use this
+/// type if writes are rare (or their speed doesn't matter).
 
 /// ```
 /// let x = unguarded::ArcRcu::new(3);
