@@ -3,20 +3,20 @@ use std::ptr::null_mut;
 
 /// A thread-safe owned pointer that allows interior mutability
 ///
-/// An [BoxNew] is currently the size of a five pointers and has an
+/// An [BoxRcu] is currently the size of a five pointers and has an
 /// additial layer of indirection.  Its size could be reduced at the
 /// cost of a bit of code complexity if that were deemed worthwhile.
 /// By using a linked list of old values, we could save a couple of
-/// words.  Read access using `BoxNew` has one additional indirection.
+/// words.  Read access using `BoxRcu` has one additional indirection.
 
 /// ```
-/// let x = unguarded::BoxNew::new(3);
+/// let x = unguarded::BoxRcu::new(3);
 /// let y: &usize = &(*x);
 /// *x.update() = 7; // Wow, we are mutating something we have borrowed!
 /// assert_eq!(*y, 3); // the old reference is still valid.
 /// assert_eq!(*x, 7); // but the pointer now points to the new value.
 /// ```
-pub struct BoxNew<T> {
+pub struct BoxRcu<T> {
     inner: AtomicPtr<List<T>>,
 }
 pub struct List<T> {
@@ -24,13 +24,13 @@ pub struct List<T> {
     next: AtomicPtr<List<T>>,
 }
 
-impl<T> std::ops::Deref for BoxNew<T> {
+impl<T> std::ops::Deref for BoxRcu<T> {
     type Target = T;
     fn deref(&self) -> &T {
         unsafe { &(*self.inner.load(Ordering::Acquire)).value }
     }
 }
-impl<T> std::borrow::Borrow<T> for BoxNew<T> {
+impl<T> std::borrow::Borrow<T> for BoxRcu<T> {
     fn borrow(&self) -> &T {
         &*self
     }
@@ -43,9 +43,9 @@ impl<T> Drop for List<T> {
         }
     }
 }
-impl<'a,T: Clone> BoxNew<T> {
+impl<'a,T: Clone> BoxRcu<T> {
     pub fn new(x: T) -> Self {
-        BoxNew {
+        BoxRcu {
             inner: AtomicPtr::new(Box::into_raw(Box::new(List {
                 value: x,
                 next: AtomicPtr::new(null_mut()),
@@ -71,7 +71,7 @@ impl<'a,T: Clone> BoxNew<T> {
 
 pub struct Guard<'a,T: Clone> {
     list: AtomicPtr<List<T>>,
-    thebox: &'a BoxNew<T>,
+    thebox: &'a BoxRcu<T>,
 }
 impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
     type Target = T;

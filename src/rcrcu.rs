@@ -4,21 +4,21 @@ use std::ptr::null_mut;
 
 /// A reference counted pointer that allows interior mutability
 ///
-/// The [RcNew] is functionally roughly equivalent to `Rc<RefCell<T>>`,
+/// The [RcRcu] is functionally roughly equivalent to `Rc<RefCell<T>>`,
 /// except that reads (of the old value) may happen while a write is
 /// taking place.
 ///
-/// An [RcNew] is currently the size of a five pointers and has an
+/// An [RcRcu] is currently the size of a five pointers and has an
 /// additial layer of indirection.  Its size could be reduced at the
 /// cost of a bit of code complexity if that were deemed worthwhile.
 /// By using a linked list of old values, we could save a couple of
-/// words.  Read access using `RcNew` has one additional indirection.
-/// Due to this additional indirection, `RcNew<T>` is probably slower
+/// words.  Read access using `RcRcu` has one additional indirection.
+/// Due to this additional indirection, `RcRcu<T>` is probably slower
 /// for read accesses than `Rc<RefCell<T>>`.  The main reason to use
 /// it is for the convenience of not calling `borrow()` on every read.
 ///
 /// ```
-/// let x = unguarded::RcNew::new(3);
+/// let x = unguarded::RcRcu::new(3);
 /// let y: &usize = &(*x);
 /// let z = x.clone();
 /// *x.update() = 7; // Wow, we are mutating something we have borrowed!
@@ -26,13 +26,13 @@ use std::ptr::null_mut;
 /// assert_eq!(*x, 7); // but the pointer now points to the new value.
 /// assert_eq!(*z, 7); // but the cloned pointer also points to the new value.
 /// ```
-pub struct RcNew<T> {
+pub struct RcRcu<T> {
     inner: Rc<Inner<T>>,
     have_borrowed: Cell<bool>,
 }
-impl<T: Clone> Clone for RcNew<T> {
+impl<T: Clone> Clone for RcRcu<T> {
     fn clone(&self) -> Self {
-        RcNew {
+        RcRcu {
             inner: self.inner.clone(),
             have_borrowed: Cell::new(false),
         }
@@ -48,7 +48,7 @@ pub struct List<T> {
     next: Cell<*mut List<T>>,
 }
 
-impl<T> std::ops::Deref for RcNew<T> {
+impl<T> std::ops::Deref for RcRcu<T> {
     type Target = T;
     fn deref(&self) -> &T {
         let aleady_borrowed = self.have_borrowed.get();
@@ -63,7 +63,7 @@ impl<T> std::ops::Deref for RcNew<T> {
         }
     }
 }
-impl<T> std::borrow::Borrow<T> for RcNew<T> {
+impl<T> std::borrow::Borrow<T> for RcRcu<T> {
     fn borrow(&self) -> &T {
         &*self
     }
@@ -75,9 +75,9 @@ impl<T> Drop for List<T> {
         }
     }
 }
-impl<'a,T: Clone> RcNew<T> {
+impl<'a,T: Clone> RcRcu<T> {
     pub fn new(x: T) -> Self {
-        RcNew {
+        RcRcu {
             have_borrowed: Cell::new(false),
             inner: Rc::new(Inner {
                 borrow_count: Cell::new(0),
@@ -91,7 +91,7 @@ impl<'a,T: Clone> RcNew<T> {
     }
     pub fn update(&'a self) -> Guard<'a, T> {
         if self.inner.am_writing.get() {
-            panic!("Cannont update an RcNew twice simultaneously.");
+            panic!("Cannont update an RcRcu twice simultaneously.");
         }
         self.inner.am_writing.set(true);
         Guard {

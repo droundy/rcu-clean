@@ -5,14 +5,14 @@ use std::ptr::null_mut;
 
 /// A thread-safe reference counted pointer that allows interior mutability
 ///
-/// An [ArcNew] is currently the size of a five pointers and has an
+/// An [ArcRcu] is currently the size of a five pointers and has an
 /// additial layer of indirection.  Its size could be reduced at the
 /// cost of a bit of code complexity if that were deemed worthwhile.
 /// By using a linked list of old values, we could save a couple of
-/// words.  Read access using `ArcNew` has one additional indirection.
+/// words.  Read access using `ArcRcu` has one additional indirection.
 
 /// ```
-/// let x = unguarded::ArcNew::new(3);
+/// let x = unguarded::ArcRcu::new(3);
 /// let y: &usize = &(*x);
 /// let z = x.clone();
 /// *x.update() = 7; // Wow, we are mutating something we have borrowed!
@@ -20,15 +20,15 @@ use std::ptr::null_mut;
 /// assert_eq!(*x, 7); // but the pointer now points to the new value.
 /// assert_eq!(*z, 7); // but the cloned pointer also points to the new value.
 /// ```
-pub struct ArcNew<T> {
+pub struct ArcRcu<T> {
     inner: Arc<Inner<T>>,
     have_borrowed: Cell<bool>,
 }
-unsafe impl<T: Send + Sync> Send for ArcNew<T> {}
-unsafe impl<T: Send + Sync> Sync for ArcNew<T> {}
-impl<T: Clone> Clone for ArcNew<T> {
+unsafe impl<T: Send + Sync> Send for ArcRcu<T> {}
+unsafe impl<T: Send + Sync> Sync for ArcRcu<T> {}
+impl<T: Clone> Clone for ArcRcu<T> {
     fn clone(&self) -> Self {
-        ArcNew {
+        ArcRcu {
             inner: self.inner.clone(),
             have_borrowed: Cell::new(false),
         }
@@ -44,7 +44,7 @@ pub struct List<T> {
     next: AtomicPtr<List<T>>,
 }
 
-impl<T> std::ops::Deref for ArcNew<T> {
+impl<T> std::ops::Deref for ArcRcu<T> {
     type Target = T;
     fn deref(&self) -> &T {
         let aleady_borrowed = self.have_borrowed.get();
@@ -60,7 +60,7 @@ impl<T> std::ops::Deref for ArcNew<T> {
         }
     }
 }
-impl<T> std::borrow::Borrow<T> for ArcNew<T> {
+impl<T> std::borrow::Borrow<T> for ArcRcu<T> {
     fn borrow(&self) -> &T {
         &*self
     }
@@ -73,9 +73,9 @@ impl<T> Drop for List<T> {
         }
     }
 }
-impl<'a,T: Clone> ArcNew<T> {
+impl<'a,T: Clone> ArcRcu<T> {
     pub fn new(x: T) -> Self {
-        ArcNew {
+        ArcRcu {
             have_borrowed: Cell::new(false),
             inner: Arc::new(Inner {
                 borrow_count: AtomicUsize::new(0),
@@ -89,7 +89,7 @@ impl<'a,T: Clone> ArcNew<T> {
     }
     pub fn update(&'a self) -> Guard<'a, T> {
         if self.inner.am_writing.swap(true, Ordering::Relaxed) {
-            panic!("Cannont update an RcNew twice simultaneously.");
+            panic!("Cannont update an ArcRcu twice simultaneously.");
         }
         Guard {
             list: Some(List {

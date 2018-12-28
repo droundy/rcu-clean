@@ -1,4 +1,4 @@
-use unguarded::{BoxNew, RcNew, ArcNew};
+use unguarded::{BoxRcu, RcRcu, ArcRcu};
 
 macro_rules! testrc {
     ($name:ident, $t:ident) => {
@@ -38,9 +38,9 @@ macro_rules! testany {
     }
 }
 
-testrc!(rcnew, RcNew);
-testrc!(arcnew, ArcNew);
+testrc!(rcrcu, RcRcu);
+testrc!(arcrcu, ArcRcu);
 
-testany!(boxnew_any, BoxNew);
-testany!(rcnew_any, RcNew);
-testany!(arcnew_any, ArcNew);
+testany!(boxrcu_any, BoxRcu);
+testany!(rcrcu_any, RcRcu);
+testany!(arcrcu_any, ArcRcu);
