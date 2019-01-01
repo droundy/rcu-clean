@@ -143,3 +143,15 @@ impl<'a,T: Clone> Drop for Guard<'a,T> {
         self.rc_guts.am_writing.set(false);
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::RcRcu;
+    #[derive(Debug, Clone)]
+    struct Foo(usize);
+    #[test]
+    fn debug() {
+        assert_eq!(&format!("{:?}", Foo(1)), "Foo(1)");
+        assert_eq!(&format!("{:?}", RcRcu::new(Foo(1))), "Foo(1)");
+    }
+}
