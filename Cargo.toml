@@ -8,6 +8,13 @@ keywords = ["RCU", "pointer", "lockless", "rc", "arc"]
 categories = ["Memory management", "Data structures"]
 license = "Apache-2.0/MIT"
 edition = "2018"
+readme = "README.md"
+
+[badges]
+
+is-it-maintained-issue-resolution = { repository = "droundy/rcu-clean" }
+is-it-maintained-open-issues = { repository = "droundy/rcu-clean" }
+maintenance = { status = "actively-developed" }
 
 [dependencies]
 
