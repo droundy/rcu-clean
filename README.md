@@ -1,4 +1,4 @@
-# rcu-clean &emsp; [![Latest version](https://img.shields.io/crates/v/rcu-clean.svg)](https://crates.io/crates/rcu-clean) [![Documentation](https://docs.rs/rcu-clean/badge.svg)](https://docs.rs/rcu-clean)
+# rcu-clean &emsp; [![Latest version](https://img.shields.io/crates/v/rcu-clean.svg)](https://crates.io/crates/rcu-clean) [![Documentation](https://docs.rs/rcu-clean/badge.svg)](https://docs.rs/rcu-clean) [![Build Status](https://travis-ci.org/droundy/rcu-clean.svg?branch=master)](https://travis-ci.org/droundy/rcu-clean)
 
 This crate provides easy to use smart-pointers with interior
 mutability.  These smart pointers use

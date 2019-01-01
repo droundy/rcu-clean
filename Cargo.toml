@@ -12,6 +12,7 @@ readme = "README.md"
 
 [badges]
 
+travis-ci = { repository = "droundy/rcu-clean" }
 is-it-maintained-issue-resolution = { repository = "droundy/rcu-clean" }
 is-it-maintained-open-issues = { repository = "droundy/rcu-clean" }
 maintenance = { status = "actively-developed" }
