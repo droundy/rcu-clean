@@ -60,6 +60,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     funs.push(benchme!("Arc", Arc, Arc::new, |x: &Arc<usize>| **x));
 
 
+    funs.push(benchme!("RcRcuStale", RcRcu,
+                       |i| { let x = RcRcu::new(0); *x.update() = i; x },
+                       |x: &RcRcu<usize>| **x as usize));
+    funs.push(benchme!("ArcRcuStale", ArcRcu,
+                       |i| { let x = ArcRcu::new(0); *x.update() = i; x },
+                       |x: &ArcRcu<usize>| **x as usize));
+    funs.push(benchme!("BoxRcuStale", BoxRcu,
+                       |i| { let x = BoxRcu::new(0); *x.update() = i; x },
+                       |x: &BoxRcu<usize>| **x as usize));
+
     funs.push(benchme!("RcRcu", RcRcu, RcRcu::new,
                        |x: &RcRcu<usize>| **x as usize));
     funs.push(benchme!("ArcRcu", ArcRcu, ArcRcu::new,
