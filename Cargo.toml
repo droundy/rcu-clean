@@ -1,6 +1,6 @@
 [package]
 name = "rcu-clean"
-version = "0.1.5"
+version = "0.1.6"
 authors = ["David Roundy <roundyd@physics.oregonstate.edu>"]
 description = "Smart pointers using RCU with Deref support."
 repository = "https://github.com/droundy/rcu-clean"
@@ -18,6 +18,8 @@ is-it-maintained-open-issues = { repository = "droundy/rcu-clean" }
 maintenance = { status = "actively-developed" }
 
 [dependencies]
+
+serde = { version = "1.0", optional = true }
 
 [dev-dependencies]
 criterion = "0.2"

@@ -94,6 +94,20 @@ macro_rules! impl_stuff {
                 (**self).fmt(f)
             }
         }
+        #[cfg(serde)]
+        impl<T: serde::Serialize> serde::Serialize for $t<T> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                (*self).serialize(serializer)
+            }
+        }
+        #[cfg(serde)]
+        impl<'de, T:  Deserialize<'de>> Deserialize<'de> for $t<T> {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D)
+                                                 -> Result<Self, D::Error>
+            {
+                T::deserialize(deserializer).map(|v| $t::new(v))
+            }
+        }
     }
 }
 
