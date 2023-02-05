@@ -66,6 +66,8 @@ pub use crate::rcrcu::RcRcu;
 mod arcrcu;
 pub use crate::arcrcu::ArcRcu;
 
+pub mod graceful;
+
 macro_rules! impl_stuff {
     ($t:ident) => {
         impl<T: PartialEq> PartialEq for $t<T> {
@@ -101,14 +103,12 @@ macro_rules! impl_stuff {
             }
         }
         #[cfg(serde)]
-        impl<'de, T:  Deserialize<'de>> Deserialize<'de> for $t<T> {
-            fn deserialize<D: Deserializer<'de>>(deserializer: D)
-                                                 -> Result<Self, D::Error>
-            {
+        impl<'de, T: Deserialize<'de>> Deserialize<'de> for $t<T> {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 T::deserialize(deserializer).map(|v| $t::new(v))
             }
         }
-    }
+    };
 }
 
 impl_stuff!(BoxRcu);
