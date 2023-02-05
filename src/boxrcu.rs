@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicPtr, Ordering};
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// An owned pointer that allows interior mutability
 ///
@@ -43,11 +43,11 @@ impl<T> Drop for List<T> {
     fn drop(&mut self) {
         let next = self.next.load(Ordering::Acquire);
         if next != null_mut() {
-            unsafe { Box::from_raw(next); }
+            let _free_this = unsafe { Box::from_raw(next) };
         }
     }
 }
-impl<'a,T: Clone> BoxRcu<T> {
+impl<'a, T: Clone> BoxRcu<T> {
     pub fn new(x: T) -> Self {
         BoxRcu {
             inner: AtomicPtr::new(Box::into_raw(Box::new(List {
@@ -60,8 +60,13 @@ impl<'a,T: Clone> BoxRcu<T> {
         Guard {
             list: AtomicPtr::new(Box::into_raw(Box::new(List {
                 value: (*(*self)).clone(),
-                next: unsafe { AtomicPtr::new((*self.inner.load(Ordering::Acquire))
-                                              .next.load(Ordering::Acquire)) },
+                next: unsafe {
+                    AtomicPtr::new(
+                        (*self.inner.load(Ordering::Acquire))
+                            .next
+                            .load(Ordering::Acquire),
+                    )
+                },
             }))),
             thebox: &self,
         }
@@ -69,27 +74,29 @@ impl<'a,T: Clone> BoxRcu<T> {
     pub fn clean(&mut self) {
         let inner = self.inner.load(Ordering::Acquire);
         let next = unsafe { (*inner).next.swap(null_mut(), Ordering::Acquire) };
-        unsafe { Box::from_raw(next); }
+        let _free_this = unsafe { Box::from_raw(next) };
     }
 }
 
-pub struct Guard<'a,T: Clone> {
+pub struct Guard<'a, T: Clone> {
     list: AtomicPtr<List<T>>,
     thebox: &'a BoxRcu<T>,
 }
-impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
+impl<'a, T: Clone> std::ops::Deref for Guard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         unsafe { &(*self.list.load(Ordering::Acquire)).value }
     }
 }
-impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
+impl<'a, T: Clone> std::ops::DerefMut for Guard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut (*self.list.load(Ordering::Acquire)).value }
     }
 }
-impl<'a,T: Clone> Drop for Guard<'a,T> {
+impl<'a, T: Clone> Drop for Guard<'a, T> {
     fn drop(&mut self) {
-        self.thebox.inner.store(self.list.load(Ordering::Acquire), Ordering::Release);
+        self.thebox
+            .inner
+            .store(self.list.load(Ordering::Acquire), Ordering::Release);
     }
 }

@@ -1,7 +1,7 @@
 use std::cell::{Cell, UnsafeCell};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicPtr, Ordering};
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// A thread-safe reference counted pointer that allows interior mutability
 ///
@@ -39,7 +39,7 @@ impl<T: Clone> Clone for ArcRcu<T> {
 pub struct Inner<T> {
     borrow_count: AtomicUsize,
     am_writing: AtomicBool,
-    list: List<T>
+    list: List<T>,
 }
 pub struct List<T> {
     value: UnsafeCell<T>,
@@ -56,9 +56,9 @@ impl<T> std::ops::Deref for ArcRcu<T> {
         }
         let next = self.inner.list.next.load(Ordering::Acquire);
         if next == null_mut() {
-            unsafe { &* self.inner.list.value.get() }
+            unsafe { &*self.inner.list.value.get() }
         } else {
-            unsafe { &* (*next).value.get() }
+            unsafe { &*(*next).value.get() }
         }
     }
 }
@@ -71,11 +71,11 @@ impl<T> Drop for List<T> {
     fn drop(&mut self) {
         let next = self.next.load(Ordering::Acquire);
         if next != null_mut() {
-            unsafe { Box::from_raw(next); }
+            let _free_this = unsafe { Box::from_raw(next) };
         }
     }
 }
-impl<'a,T: Clone> ArcRcu<T> {
+impl<'a, T: Clone> ArcRcu<T> {
     pub fn new(x: T) -> Self {
         ArcRcu {
             have_borrowed: Cell::new(false),
@@ -113,16 +113,18 @@ impl<'a,T: Clone> ArcRcu<T> {
             unsafe {
                 // make a copy of the old datum that we will need to free
                 let buffer: UnsafeCell<Option<T>> = UnsafeCell::new(None);
-                std::ptr::copy_nonoverlapping(self.inner.list.value.get(),
-                                              buffer.get() as *mut T, 1);
+                std::ptr::copy_nonoverlapping(
+                    self.inner.list.value.get(),
+                    buffer.get() as *mut T,
+                    1,
+                );
                 // now copy the "good" value to the main spot
-                std::ptr::copy_nonoverlapping((*next).value.get(),
-                                              self.inner.list.value.get(), 1);
+                std::ptr::copy_nonoverlapping((*next).value.get(), self.inner.list.value.get(), 1);
                 // Now we can set the pointer to null which activates
                 // the copy we just made.
-                let _to_be_freed = Box::from_raw(self.inner.list.next.swap(null_mut(), Ordering::Release));
-                std::ptr::copy_nonoverlapping(buffer.get() as *mut T,
-                                              (*next).value.get(), 1);
+                let _to_be_freed =
+                    Box::from_raw(self.inner.list.next.swap(null_mut(), Ordering::Release));
+                std::ptr::copy_nonoverlapping(buffer.get() as *mut T, (*next).value.get(), 1);
                 let buffer_copy: UnsafeCell<Option<T>> = UnsafeCell::new(None);
                 std::ptr::copy_nonoverlapping(buffer_copy.get(), buffer.get(), 1);
             }
@@ -130,21 +132,21 @@ impl<'a,T: Clone> ArcRcu<T> {
     }
 }
 
-pub struct Guard<'a,T: Clone> {
+pub struct Guard<'a, T: Clone> {
     list: Option<List<T>>,
     rc_guts: &'a Inner<T>,
 }
-impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
+impl<'a, T: Clone> std::ops::Deref for Guard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         if let Some(ref list) = self.list {
-            unsafe { & *list.value.get() }
+            unsafe { &*list.value.get() }
         } else {
             unreachable!()
         }
     }
 }
-impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
+impl<'a, T: Clone> std::ops::DerefMut for Guard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         if let Some(ref list) = self.list {
             unsafe { &mut *list.value.get() }
@@ -153,11 +155,13 @@ impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
         }
     }
 }
-impl<'a,T: Clone> Drop for Guard<'a,T> {
+impl<'a, T: Clone> Drop for Guard<'a, T> {
     fn drop(&mut self) {
         let list = std::mem::replace(&mut self.list, None);
-        self.rc_guts.list.next.store(Box::into_raw(Box::new(list.unwrap())),
-                                     Ordering::Release);
+        self.rc_guts
+            .list
+            .next
+            .store(Box::into_raw(Box::new(list.unwrap())), Ordering::Release);
         self.rc_guts.am_writing.store(false, Ordering::Relaxed);
     }
 }

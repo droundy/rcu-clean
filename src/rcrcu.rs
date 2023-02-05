@@ -1,6 +1,6 @@
 use std::cell::{Cell, UnsafeCell};
-use std::rc::Rc;
 use std::ptr::null_mut;
+use std::rc::Rc;
 
 /// A reference counted pointer that allows interior mutability
 ///
@@ -34,7 +34,7 @@ impl<T: Clone> Clone for RcRcu<T> {
 pub struct Inner<T> {
     borrow_count: Cell<usize>,
     am_writing: Cell<bool>,
-    list: List<T>
+    list: List<T>,
 }
 pub struct List<T> {
     value: UnsafeCell<T>,
@@ -46,13 +46,15 @@ impl<T> std::ops::Deref for RcRcu<T> {
     fn deref(&self) -> &T {
         let aleady_borrowed = self.have_borrowed.get();
         if !aleady_borrowed {
-            self.inner.borrow_count.set(self.inner.borrow_count.get() + 1);
+            self.inner
+                .borrow_count
+                .set(self.inner.borrow_count.get() + 1);
             self.have_borrowed.set(true); // indicate we have borrowed this once.
         }
         if self.inner.list.next.get() == null_mut() {
             unsafe { &*self.inner.list.value.get() }
         } else {
-            unsafe { &* (*self.inner.list.next.get()).value.get() }
+            unsafe { &*(*self.inner.list.next.get()).value.get() }
         }
     }
 }
@@ -64,11 +66,11 @@ impl<T> std::borrow::Borrow<T> for RcRcu<T> {
 impl<T> Drop for List<T> {
     fn drop(&mut self) {
         if self.next.get() != null_mut() {
-            unsafe { Box::from_raw(self.next.get()); }
+            let _to_free = unsafe { Box::from_raw(self.next.get()) };
         }
     }
 }
-impl<'a,T: Clone> RcRcu<T> {
+impl<'a, T: Clone> RcRcu<T> {
     pub fn new(x: T) -> Self {
         RcRcu {
             have_borrowed: Cell::new(false),
@@ -98,36 +100,38 @@ impl<'a,T: Clone> RcRcu<T> {
     pub fn clean(&mut self) {
         let aleady_borrowed = self.have_borrowed.get();
         if aleady_borrowed {
-            self.inner.borrow_count.set(self.inner.borrow_count.get() - 1);
+            self.inner
+                .borrow_count
+                .set(self.inner.borrow_count.get() - 1);
             self.have_borrowed.set(false); // indicate we have no longer borrowed this.
         }
-        if self.inner.borrow_count.get() == 0 &&
-            self.inner.list.next.get() != null_mut()
-        {
+        if self.inner.borrow_count.get() == 0 && self.inner.list.next.get() != null_mut() {
             unsafe {
-                std::mem::swap(&mut *self.inner.list.value.get(),
-                               &mut *(*self.inner.list.next.get()).value.get());
-                Box::from_raw(self.inner.list.next.replace(null_mut()));
+                std::mem::swap(
+                    &mut *self.inner.list.value.get(),
+                    &mut *(*self.inner.list.next.get()).value.get(),
+                );
+                let _to_free = Box::from_raw(self.inner.list.next.replace(null_mut()));
             }
         }
     }
 }
 
-pub struct Guard<'a,T: Clone> {
+pub struct Guard<'a, T: Clone> {
     list: Option<List<T>>,
     rc_guts: &'a Inner<T>,
 }
-impl<'a,T: Clone> std::ops::Deref for Guard<'a,T> {
+impl<'a, T: Clone> std::ops::Deref for Guard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         if let Some(ref list) = self.list {
-            unsafe { & *list.value.get() }
+            unsafe { &*list.value.get() }
         } else {
             unreachable!()
         }
     }
 }
-impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
+impl<'a, T: Clone> std::ops::DerefMut for Guard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         if let Some(ref list) = self.list {
             unsafe { &mut *list.value.get() }
@@ -136,10 +140,13 @@ impl<'a,T: Clone> std::ops::DerefMut for Guard<'a,T> {
         }
     }
 }
-impl<'a,T: Clone> Drop for Guard<'a,T> {
+impl<'a, T: Clone> Drop for Guard<'a, T> {
     fn drop(&mut self) {
         let list = std::mem::replace(&mut self.list, None);
-        self.rc_guts.list.next.set(Box::into_raw(Box::new(list.unwrap())));
+        self.rc_guts
+            .list
+            .next
+            .set(Box::into_raw(Box::new(list.unwrap())));
         self.rc_guts.am_writing.set(false);
     }
 }
