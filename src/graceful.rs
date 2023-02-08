@@ -1,10 +1,10 @@
 //! An attempt at Rcu with grace periods
 //!
-//! We can allocate `Rcu` just like you would a `Box`.
+//! We can allocate `Rcu` just like you would a `Arc`.
 //! ```
 //! let v = rcu_clean::graceful::Rcu::new("hello");
 //! ```
-//! These pointers are freed just like an ordinary `Box`.  The big difference is
+//! These pointers are freed just like an ordinary `Arc`.  The big difference is
 //! that you can update these pointers while they are being read, but reading
 //! from the pointers requires a [`Grace`].
 //! ```
@@ -33,36 +33,47 @@
 //! `RwLock::read` which would be the `std` alternative for a data structure
 //! with many readers and few writers.
 use std::ops::Deref;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex};
 
 use once_cell::sync::OnceCell;
 
-/// An RCU pointer with grace periods
-pub struct Rcu<T>(std::sync::atomic::AtomicPtr<T>);
+/// A reference-counted RCU pointer with grace periods
+pub struct Rcu<T>(AtomicPtr<T>);
 
 unsafe impl<T: Sync> Sync for Rcu<T> {}
 unsafe impl<T: Send> Send for Rcu<T> {}
 
-impl<T> Drop for Rcu<T> {
-    fn drop(&mut self) {
+impl<T> Clone for Rcu<T> {
+    fn clone(&self) -> Self {
         let p = self.0.swap(std::ptr::null_mut(), Ordering::Acquire);
-        let _to_free = unsafe { Box::from_raw(p) };
+        let arc: Arc<T> = unsafe { Arc::from_raw(p) };
+        let other = arc.clone();
+        let _copy_i_am_keeping = Arc::into_raw(arc);
+        // Use the other copy for the clone
+        Rcu(AtomicPtr::new(Arc::into_raw(other) as *mut T))
     }
 }
 
-impl<T> From<Box<T>> for Rcu<T> {
-    fn from(b: Box<T>) -> Self {
-        Rcu(std::sync::atomic::AtomicPtr::new(Box::into_raw(b)))
+impl<T> Drop for Rcu<T> {
+    fn drop(&mut self) {
+        let p = self.0.swap(std::ptr::null_mut(), Ordering::Acquire);
+        let _to_free = unsafe { Arc::from_raw(p) };
+    }
+}
+
+impl<T> From<Arc<T>> for Rcu<T> {
+    fn from(b: Arc<T>) -> Self {
+        Rcu(std::sync::atomic::AtomicPtr::new(Arc::into_raw(b) as *mut T))
     }
 }
 
 impl<T: Clone + Send + Sync + 'static> Rcu<T> {
     /// Allocate a new Rcu pointer
     ///
-    /// This is no more expensive than `Box::new`.
+    /// This is no more expensive than `Arc::new`.
     pub fn new(value: T) -> Self {
-        Self::from(Box::new(value))
+        Self::from(Arc::new(value))
     }
     /// Read the pointer, with the given grace period
     ///
@@ -83,15 +94,15 @@ impl<T: Clone + Send + Sync + 'static> Rcu<T> {
     /// closure (or function) to update the value.  Once the new value has been
     /// computed, the `Rcu` is atomically updated to point to the new values.
     ///
-    /// The old value will be retained until we are confident that no readers
-    /// remaining.
+    /// The old value will be retained until the last `Grace` that is open when
+    /// we start the `update` is dropped.
     ///
     /// Note that simultaneous updates to the same pointer are possible and are
     /// *safe* but are not *recommended*.
     pub fn update(&self, f: impl FnOnce(&mut T)) {
         // start by getting the grace period for our copy.
-        let mut new = Box::new(self.read(&Grace::new()).clone());
-        f(new.as_mut());
+        let mut new = Arc::new(self.read(&Grace::new()).clone());
+        f(Arc::get_mut(&mut new).unwrap());
 
         // Now we take the grace-period lock before doing our update.  Since we
         // have just source of grace, this means no other critical update
@@ -104,13 +115,13 @@ impl<T: Clone + Send + Sync + 'static> Rcu<T> {
         let mut vec_lock = lock.lock().unwrap();
 
         // First we store the old value to be freed.
-        let old = self.0.swap(Box::into_raw(new), Ordering::Release);
-        vec_lock.push(unsafe { Box::from_raw(old) });
+        let old = self.0.swap(Arc::into_raw(new) as *mut T, Ordering::Release);
+        vec_lock.push(unsafe { Arc::from_raw(old) });
 
         let next_grace = Arc::new(Mutex::new(Vec::new()));
         // The old grace period will depend on the new grace period, so the
         // freeing happens in the correct order.
-        vec_lock.push(Box::new(next_grace.clone()));
+        vec_lock.push(Arc::new(next_grace.clone()));
         drop(vec_lock);
 
         // Now we update the SourceOfGrace, which should always hold an empty
@@ -130,7 +141,7 @@ static GRACE: OnceCell<SourceOfGrace> = OnceCell::new();
 /// using it for a number of reads.
 #[derive(Clone)]
 pub struct Grace {
-    _to_free: Arc<Mutex<Vec<Box<dyn Send + Sync>>>>,
+    _to_free: Arc<Mutex<Vec<Arc<dyn Send + Sync>>>>,
 }
 
 impl Grace {
@@ -151,7 +162,7 @@ impl Grace {
     }
 }
 
-struct SourceOfGrace(Mutex<Arc<Mutex<Vec<Box<dyn Send + Sync>>>>>);
+struct SourceOfGrace(Mutex<Arc<Mutex<Vec<Arc<dyn Send + Sync>>>>>);
 
 /// A reference to contents that are being read
 ///
