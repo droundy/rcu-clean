@@ -1,4 +1,4 @@
-use std::cell::{Cell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// ```
 pub struct ArcRcu<T> {
     inner: Arc<Inner<T>>,
-    have_borrowed: Cell<bool>,
+    have_borrowed: AtomicBool,
 }
 unsafe impl<T: Send + Sync> Send for ArcRcu<T> {}
 unsafe impl<T: Send + Sync> Sync for ArcRcu<T> {}
@@ -32,7 +32,7 @@ impl<T: Clone> Clone for ArcRcu<T> {
     fn clone(&self) -> Self {
         ArcRcu {
             inner: self.inner.clone(),
-            have_borrowed: Cell::new(false),
+            have_borrowed: AtomicBool::new(false),
         }
     }
 }
@@ -49,10 +49,16 @@ pub struct List<T> {
 impl<T> std::ops::Deref for ArcRcu<T> {
     type Target = T;
     fn deref(&self) -> &T {
-        let aleady_borrowed = self.have_borrowed.get();
-        if !aleady_borrowed {
-            self.inner.borrow_count.fetch_add(1, Ordering::Relaxed);
-            self.have_borrowed.set(true); // indicate we have borrowed this once.
+        // optimization: so we dont compare exch on every deref call
+        if !self.have_borrowed.load(Ordering::Relaxed) {
+            if let Ok(_) = self.have_borrowed.compare_exchange(
+                false,
+                true,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                self.inner.borrow_count.fetch_add(1, Ordering::Relaxed);
+            }
         }
         let next = self.inner.list.next.load(Ordering::Acquire);
         if next == null_mut() {
@@ -78,7 +84,7 @@ impl<T> Drop for List<T> {
 impl<'a, T: Clone> ArcRcu<T> {
     pub fn new(x: T) -> Self {
         ArcRcu {
-            have_borrowed: Cell::new(false),
+            have_borrowed: AtomicBool::new(false),
             inner: Arc::new(Inner {
                 borrow_count: AtomicUsize::new(0),
                 am_writing: AtomicBool::new(false),
@@ -102,10 +108,17 @@ impl<'a, T: Clone> ArcRcu<T> {
         }
     }
     pub fn clean(&mut self) {
-        let aleady_borrowed = self.have_borrowed.get();
-        if aleady_borrowed {
+        if self.have_borrowed.load(Ordering::Relaxed) {
             self.inner.borrow_count.fetch_sub(1, Ordering::Relaxed);
-            self.have_borrowed.set(false); // indicate we have no longer borrowed this.
+            if self.inner.borrow_count.load(Ordering::Acquire) == 0 {
+                // if invalid, doesnt matter we will be at zero anyways
+                _ = self.have_borrowed.compare_exchange(
+                    true,
+                    false,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                );
+            }
         }
         let borrow_count = self.inner.borrow_count.load(Ordering::Relaxed);
         let next = self.inner.list.next.load(Ordering::Acquire);
